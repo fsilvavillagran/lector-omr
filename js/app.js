@@ -2022,6 +2022,7 @@ function renderReview(){
               <button class="secondary small" onclick="clearRunReviewFields('${r.id}')">Limpiar</button>
             </div>
             <div class="review-note">Puedes seleccionar un estudiante aunque haya dejado el RUN vacío. Si escribes un RUN, la app intentará asociarlo con la nómina, pero no lo hará silenciosamente.</div>
+            <details class="review-fullsheet"><summary>Ver hoja completa para comparar</summary>${page.thumb?`<img src="${page.thumb}" alt="Hoja completa">`:''}</details>
           </div>
         </div>
       </div>`;
@@ -2036,12 +2037,24 @@ function renderReview(){
         <div class="answer-review-list">
           ${qs.map(a=>{
             const selected=Object.prototype.hasOwnProperty.call(pending,a.n)?pending[a.n]:a.answer;
+            const ev=state.evaluations.find(e=>e.id===page.omr.evaluationId);
+            const form=page.omr.form||ev?.forms?.[0];
+            const q=ev?.formConfigs?.[form]?.items?.[a.n-1];
+            const labels=a.metrics?.labels||['A','B','C','D'].slice(0,a.scores?.length||4);
+            const scoreText=labels.map((l,i)=>`${l}: ${Math.round((a.scores?.[i]||0)*100)}%`).join(' · ');
             return `<div class="answer-review-row">
               ${a.crop?`<img src="${a.crop}" alt="Pregunta ${a.n}">`:`<div class="empty">P${a.n}</div>`}
               <div>
                 <strong>Pregunta ${a.n}</strong>
-                <div class="meta">Lectura provisional: ${esc(a.answer||'sin respuesta')}</div>
-                <div class="meta">Selección para guardar: ${esc(selected||'Blanco')}</div>
+                <div class="read-metrics">
+                  <div class="read-metric"><span>Lectura</span><strong>${esc(a.answer||'Blanco')}</strong></div>
+                  <div class="read-metric"><span>Clave correcta</span><strong>${esc(q?.key||'—')}</strong></div>
+                  <div class="read-metric"><span>Puntaje</span><strong>${q?.points??'—'}</strong></div>
+                  <div class="read-metric"><span>Estado</span><strong>Marca ambigua</strong></div>
+                </div>
+                ${q?.skill||q?.content?`<div class="meta">${q?.skill?`Habilidad: ${esc(q.skill)}`:''}${q?.skill&&q?.content?' · ':''}${q?.content?`Contenido: ${esc(q.content)}`:''}</div>`:''}
+                <div class="meta">Intensidad: ${esc(scoreText)}</div>
+                <div class="meta">Selección para guardar: <strong>${esc(selected||'Blanco')}</strong></div>
               </div>
               <div class="choice-buttons">
                 ${['A','B','C','D'].map(l=>`<button class="${selected===l?'primary pending':'secondary'} small" onclick="selectPendingAnswer('${r.id}',${a.n},'${l}')">${l}</button>`).join('')}
@@ -2050,6 +2063,7 @@ function renderReview(){
             </div>`;
           }).join('')}
         </div>
+        <details class="review-fullsheet"><summary>Ver hoja completa para comparar</summary>${page.thumb?`<img src="${page.thumb}" alt="Hoja completa">`:''}</details>
         <div class="review-savebar">
           <span class="status">${Object.keys(pending).length?'Hay cambios pendientes de guardar.':'Selecciona la respuesta correcta y luego guarda.'}</span>
           <button class="secondary small" onclick="cancelPendingAnswers('${r.id}')">Deshacer cambios</button>
@@ -2199,7 +2213,7 @@ function renderDataIntegrity(){
 
 
 const AppArchitecture={
-  version:'0.34',
+  version:'0.35',
   modules:{
     data:{name:'Datos',description:'Persistencia, identidad longitudinal opcional e integridad.',get snapshot(){return databaseSnapshot},get persist(){return persist},get audit(){return dataIntegrityReport}},
     evidence:{name:'Evidencias',description:'Imágenes corregidas asociadas a resultados.',get put(){return evidencePut},get get(){return evidenceGet},get remove(){return evidenceDelete},get keys(){return evidenceKeys}},
@@ -2388,7 +2402,7 @@ async function openCameraMode(){
   }
   openModal('cameraModal');
   cameraSessionCaptures=0;
-  $('#cameraCaptureCount').textContent='0';
+  $('#cameraCaptureCount').textContent='0';if($('#cameraLastCapture'))$('#cameraLastCapture').innerHTML='';
   setCameraStatus('Iniciando cámara…',0,'warn');
   try{
     if(!navigator.mediaDevices?.getUserMedia){
@@ -2439,10 +2453,13 @@ function probeCameraFrame(){
     c.height=Math.max(1,Math.round(video.videoHeight*scale));
     ctx.drawImage(video,0,0,c.width,c.height);
     const im=ctx.getImageData(0,0,c.width,c.height);
-    const markers=detectOuterMarkers(im);
-    const count=markers.filter(Boolean).length;
-    if(count===4){
-      setCameraStatus('Hoja detectada. Mantén la cámara estable.',4,'ready');
+    const det=detectOuterMarkersDetailed(im);
+    const count=det.markers.filter(Boolean).length;
+    if(count===4&&det.geometry.ok){
+      setCameraStatus('Hoja detectada y geometría válida. Mantén la cámara estable.',4,'ready');
+    }else if(count===4){
+      setCameraStatus(det.geometry.reason||'Se ven cuatro cuadrados, pero la geometría no es confiable.',4,'warn');
+      cameraReady=false;$('#cameraCaptureReady').disabled=true;
     }else if(count>=2){
       setCameraStatus('Casi lista: ajusta el encuadre para ver toda la hoja.',count,'warn');
     }else{
@@ -2477,8 +2494,15 @@ async function captureCameraFrame(force=false){
   });
   cameraSessionCaptures++;
   $('#cameraCaptureCount').textContent=String(cameraSessionCaptures);
+  const flash=$('#cameraFlash');if(flash){flash.classList.add('show');setTimeout(()=>flash.classList.remove('show'),170)}
+  if(navigator.vibrate)try{navigator.vibrate(80)}catch(_){}
+  const preview=$('#cameraLastCapture');
+  if(preview)preview.innerHTML=`<div class="camera-last"><img src="${data}" alt="Última captura"><div><strong>✓ Captura ${cameraSessionCaptures} agregada al lote</strong><div class="meta">${c.width} × ${c.height}px · ${cameraTimestamp()}</div></div></div>`;
+  const okBtn=$('#cameraCaptureReady'),forceBtn=$('#cameraCaptureAnyway');
+  if(okBtn){const old=okBtn.textContent;okBtn.textContent=`✓ Capturada (${cameraSessionCaptures})`;okBtn.disabled=true;setTimeout(()=>{okBtn.textContent=old;okBtn.disabled=!cameraReady},650)}
+  if(forceBtn){forceBtn.disabled=true;setTimeout(()=>forceBtn.disabled=false,650)}
   renderScan();
-  setCameraStatus('Captura agregada. Puedes escanear otra hoja.',cameraReady?4:0,cameraReady?'ready':'warn');
+  setCameraStatus(`Captura ${cameraSessionCaptures} agregada. Puedes escanear otra hoja.`,cameraReady?4:0,cameraReady?'ready':'warn');
 }
 function closeCameraMode(){
   stopCameraProbe();
@@ -2674,8 +2698,10 @@ async function analyzeOMRPage(page,ev){
   c.width=img.naturalWidth||img.width;c.height=img.naturalHeight||img.height;
   const ctx=c.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0,c.width,c.height);
   const im=ctx.getImageData(0,0,c.width,c.height);
-  const markers=detectOuterMarkers(im);
+  const det=detectOuterMarkersDetailed(im);
+  const markers=det.markers;
   if(markers.some(x=>!x))return {ok:false,error:'No se detectaron con seguridad los cuatro marcadores exteriores.'};
+  if(!det.geometry.ok)return {ok:false,error:`Se detectaron cuatro candidatos, pero la geometría no es confiable: ${det.geometry.reason}`};
   const H=computeHomography(OMR_TEMPLATE.markers,markers);
   if(!H)return {ok:false,error:'No fue posible calcular la geometría de la hoja.'};
 
@@ -2694,8 +2720,8 @@ async function analyzeOMRPage(page,ev){
     if(ar.status==='ambiguous'){
       const pts=centers.filter(Boolean);
       if(pts.length){
-        const minx=Math.min(...pts.map(p=>p.x))-24,maxx=Math.max(...pts.map(p=>p.x))+24;
-        const miny=Math.min(...pts.map(p=>p.y))-18,maxy=Math.max(...pts.map(p=>p.y))+18;
+        const minx=Math.min(...pts.map(p=>p.x))-82,maxx=Math.max(...pts.map(p=>p.x))+34;
+        const miny=Math.min(...pts.map(p=>p.y))-26,maxy=Math.max(...pts.map(p=>p.y))+26;
         ar.crop=cropCanonicalRegion(c,ctx,H,minx,miny,maxx,maxy);
       }
     }
@@ -2744,9 +2770,11 @@ function classifyRow(n,scores,labels=['A','B','C','D']){
   const best=ranked[0],second=ranked[1];
   const baseline=(scores.reduce((a,b)=>a+b,0)-best.s)/Math.max(1,scores.length-1);
   const threshold=Math.max(.24,baseline+.10);
-  if(best.s<threshold)return {n,answer:'',status:'blank',scores};
-  if(second.s>.22 && best.s-second.s<.10)return {n,answer:labels[best.i],status:'ambiguous',scores};
-  return {n,answer:labels[best.i],status:'ok',scores};
+  const margin=best.s-(second?.s||0);
+  const metrics={best:best.s,second:second?.s||0,margin,threshold,labels};
+  if(best.s<threshold)return {n,answer:'',status:'blank',scores,metrics};
+  if(second.s>.22 && margin<.10)return {n,answer:labels[best.i],status:'ambiguous',scores,metrics};
+  return {n,answer:labels[best.i],status:'ok',scores,metrics};
 }
 function readRun(im,H){
   let digits='',issues=[];
@@ -2806,41 +2834,84 @@ function bubbleDarkness(im,H,x,y,rCanon){
   }
   return count?dark/count:0;
 }
+function expectedMarkerNorm(){
+  return OMR_TEMPLATE.markers.map(p=>({x:p.x/OMR_TEMPLATE.width,y:p.y/OMR_TEMPLATE.height}));
+}
 function detectOuterMarkers(im){
+  return detectOuterMarkersDetailed(im).markers;
+}
+function detectOuterMarkersDetailed(im){
   const w=im.width,h=im.height;
   const regs=[[0,0,.36,.28],[.64,0,1,.28],[0,.72,.36,1],[.64,.72,1,1]];
-  return regs.map(r=>findMarkerInRegion(im,Math.floor(r[0]*w),Math.floor(r[1]*h),Math.floor(r[2]*w),Math.floor(r[3]*h)));
+  const expected=expectedMarkerNorm();
+  const markers=regs.map((r,i)=>{
+    const candidates=findMarkerCandidatesInRegion(im,Math.floor(r[0]*w),Math.floor(r[1]*h),Math.floor(r[2]*w),Math.floor(r[3]*h));
+    if(!candidates.length)return null;
+    const ex={x:expected[i].x*w,y:expected[i].y*h};
+    candidates.forEach(c=>{
+      const diag=Math.hypot(w,h);
+      const loc=Math.hypot(c.x-ex.x,c.y-ex.y)/diag;
+      const idealSide=Math.min(w,h)*.025;
+      const sizePenalty=Math.abs(Math.log(Math.max(1,c.side)/idealSide));
+      c.rank=c.shapeScore - loc*8 - sizePenalty*.55;
+    });
+    return candidates.sort((a,b)=>b.rank-a.rank)[0];
+  });
+  const points=markers.map(m=>m?{x:m.x,y:m.y}:null);
+  const geometry=validateMarkerGeometry(points,w,h);
+  return {markers:points,raw:markers,geometry};
 }
-function findMarkerInRegion(im,x0,y0,x1,y1){
+function validateMarkerGeometry(markers,w,h){
+  if(markers.some(x=>!x))return {ok:false,reason:'Faltan marcadores exteriores.'};
+  const [tl,tr,bl,br]=markers;
+  const top=dist(tl,tr),bottom=dist(bl,br),left=dist(tl,bl),right=dist(tr,br);
+  if(top<=0||bottom<=0||left<=0||right<=0)return {ok:false,reason:'Geometría incompleta.'};
+  const topRatio=Math.min(top,bottom)/Math.max(top,bottom);
+  const sideRatio=Math.min(left,right)/Math.max(left,right);
+  const expectedAspect=(OMR_TEMPLATE.markers[1].x-OMR_TEMPLATE.markers[0].x)/(OMR_TEMPLATE.markers[2].y-OMR_TEMPLATE.markers[0].y);
+  const actualAspect=((top+bottom)/2)/((left+right)/2);
+  const aspectRatio=Math.min(actualAspect/expectedAspect,expectedAspect/actualAspect);
+  const convex=(tr.x>tl.x && br.x>bl.x && bl.y>tl.y && br.y>tr.y);
+  const area=Math.abs((tl.x*tr.y-tr.x*tl.y)+(tr.x*br.y-br.x*tr.y)+(br.x*bl.y-bl.x*br.y)+(bl.x*tl.y-tl.x*bl.y))/2;
+  const areaFrac=area/(w*h);
+  const ok=convex&&topRatio>.72&&sideRatio>.72&&aspectRatio>.62&&areaFrac>.35;
+  let reason='';
+  if(!convex)reason='Los marcadores no forman el rectángulo esperado.';
+  else if(areaFrac<=.35)reason='La hoja ocupa muy poco del encuadre.';
+  else if(topRatio<=.72||sideRatio<=.72)reason='La perspectiva es demasiado irregular.';
+  else if(aspectRatio<=.62)reason='La proporción entre marcadores no coincide con la plantilla.';
+  return {ok,reason,topRatio,sideRatio,aspectRatio,areaFrac};
+}
+function findMarkerCandidatesInRegion(im,x0,y0,x1,y1){
   const w=im.width,h=im.height,d=im.data,rw=x1-x0,rh=y1-y0;
   const step=Math.max(1,Math.floor(Math.min(w,h)/1100));
   const gw=Math.ceil(rw/step),gh=Math.ceil(rh/step),seen=new Uint8Array(gw*gh);
   const isDark=(gx,gy)=>{
     const x=x0+gx*step,y=y0+gy*step;if(x>=w||y>=h)return false;
-    const k=(y*w+x)*4,lum=.299*d[k]+.587*d[k+1]+.114*d[k+2];return lum<100;
+    const k=(y*w+x)*4,lum=.299*d[k]+.587*d[k+1]+.114*d[k+2];return lum<95;
   };
-  let best=null;
+  const out=[];
   for(let gy=0;gy<gh;gy++)for(let gx=0;gx<gw;gx++){
     const idx=gy*gw+gx;if(seen[idx]||!isDark(gx,gy))continue;
     const stack=[idx];seen[idx]=1;let count=0,minx=gx,maxx=gx,miny=gy,maxy=gy;
     while(stack.length){
       const cur=stack.pop(),cy=Math.floor(cur/gw),cx=cur-cy*gw;count++;
       if(cx<minx)minx=cx;if(cx>maxx)maxx=cx;if(cy<miny)miny=cy;if(cy>maxy)maxy=cy;
-      const ns=[[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]];
-      for(const [nx,ny] of ns){
+      for(const [nx,ny] of [[cx-1,cy],[cx+1,cy],[cx,cy-1],[cx,cy+1]]){
         if(nx<0||ny<0||nx>=gw||ny>=gh)continue;
         const ni=ny*gw+nx;
         if(!seen[ni]&&isDark(nx,ny)){seen[ni]=1;stack.push(ni)}
       }
     }
     const bw=(maxx-minx+1)*step,bh=(maxy-miny+1)*step,side=Math.min(bw,bh),ratio=bw/bh;
-    const minSide=Math.min(w,h)*.012,maxSide=Math.min(w,h)*.075;
-    if(side<minSide||side>maxSide||ratio<.62||ratio>1.55)continue;
-    const fill=(count*step*step)/(bw*bh);if(fill<.48)continue;
-    const score=bw*bh*fill;
-    if(!best||score>best.score)best={x:x0+(minx+maxx+1)*step/2,y:y0+(miny+maxy+1)*step/2,score};
+    const minSide=Math.min(w,h)*.012,maxSide=Math.min(w,h)*.065;
+    if(side<minSide||side>maxSide||ratio<.72||ratio>1.38)continue;
+    const fill=(count*step*step)/(bw*bh);if(fill<.58)continue;
+    const squareness=1-Math.min(1,Math.abs(1-ratio));
+    const shapeScore=fill*2+squareness+(side/Math.min(w,h))*4;
+    out.push({x:x0+(minx+maxx+1)*step/2,y:y0+(miny+maxy+1)*step/2,side,fill,shapeScore});
   }
-  return best?{x:best.x,y:best.y}:null;
+  return out;
 }
 function computeHomography(src,dst){
   const A=[],b=[];
@@ -2962,4 +3033,4 @@ $('#saveSchoolYear').onclick=()=>{
  const i=state.years.findIndex(y=>Number(y.year)===year);if(i>=0)state.years[i]=obj;else state.years.push(obj);
  logActivity('school_year_saved',`Calendario ${year}`,{year});persist();renderSettings();renderDashboard();renderCourses();renderCalendar();alert(`Calendario ${year} guardado.`);
 };$('#saveSettings').onclick=()=>{state.settings={threshold:Number($('#settingThreshold').value)||60,minGrade:Number($('#settingMinGrade').value)||1,passGrade:Number($('#settingPassGrade').value)||4,maxGrade:Number($('#settingMaxGrade').value)||7};persist();alert('Escala predeterminada guardada.')};
-persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.34 activa';setTimeout(()=>rt.remove(),2500);
+persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.35 activa';setTimeout(()=>rt.remove(),2500);
