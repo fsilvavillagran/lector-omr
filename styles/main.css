@@ -274,6 +274,15 @@
 .marker-warning{margin-top:6px;padding:7px 9px;border-radius:8px;background:#fff6df;border:1px solid #e7c678;font-size:10px}
 
 
+.scan-finalize{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.scan-review-panel{margin-top:16px;border-top:2px solid var(--line);padding-top:14px}
+.scan-review-panel.hidden{display:none}
+.draft-badge{background:#fff5d7;color:#8a6518}
+.saved-badge{background:#e7f7ef;color:#176946}
+.omitted-badge{background:#f6e7e5;color:#983d35}
+.review-context-note{font-size:9px;color:var(--muted);margin:5px 0 8px}
+
+
 
 
     body{font-family:Arial,sans-serif;color:#1e2935;margin:0;background:#fff}

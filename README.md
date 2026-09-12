@@ -1,11 +1,12 @@
-# Lector OMR Docente v0.35
+# Lector OMR Docente v0.36
 
-Mejoras tras primera prueba real con iPhone:
+Nuevo flujo integrado de escaneo:
 
-- Confirmación visible de cada captura: flash, miniatura, contador y vibración cuando está disponible.
-- Pausa breve de botones para evitar dobles capturas accidentales.
-- Detección de marcadores más estricta: posición esperada + geometría del cuadrilátero, para reducir falsos positivos causados por el QR.
-- El OMR rechaza una hoja si aparecen cuatro candidatos pero su geometría no coincide con la plantilla.
-- Los recortes de respuestas dudosas son más anchos e intentan incluir número de pregunta y toda la fila.
-- Revisión muestra lectura, clave correcta, puntaje, habilidad/contenido e intensidades por alternativa.
-- Cada incidencia permite desplegar la hoja completa para comparar.
+1. Las capturas de cámara quedan preparadas automáticamente; **Preparar archivos** se usa solo para JPG/PNG/PDF cargados.
+2. **Analizar OMR** genera un borrador. Ya no traspasa resultados inmediatamente al curso.
+3. Las anomalías aparecen en la misma pantalla de Importar / Escanear.
+4. **Revisar anomalías** lleva al bloque de revisión del lote.
+5. **Guardar cambios** traspasa al curso solo las hojas sin anomalías pendientes.
+6. Si quedan datos sin revisar, la app advierte que esas hojas se perderán y no se traspasarán si se continúa.
+7. Se eliminó la pestaña independiente “Revisión”.
+8. Los recortes ambiguos tienen mucho más contexto vertical para que pueda verse el número impreso de la pregunta y detectar desplazamientos de fila.

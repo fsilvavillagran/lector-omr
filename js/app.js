@@ -289,8 +289,8 @@ function migrate(){
   state.evaluations.forEach(ev=>{ev.type=ev.type||'sumativa';ev.status=ev.status||'configurada';ev.archived=ev.archived===true;ev.unit=ev.unit||'';ev.objective=ev.objective||'';ev.date=ev.date||'';ev.forms=ev.forms?.length?ev.forms:['Única'];ev.grading=ev.grading||{...state.settings};if(!ev.questions){ev.questions=Math.max(...ev.forms.map(f=>ev.formConfigs?.[f]?.items?.length||0),1)}ensureEvaluationQuestions(ev)})
 }
 migrate();persist();
-const meta={dashboard:['Inicio','Gestión de evaluaciones, cursos y lectura OMR.'],courses:['Cursos','Estudiantes e historial de evaluaciones por año.'],calendar:['Calendario','Agenda simple de evaluaciones asociadas al lector.'],evaluations:['Evaluaciones','Configuración pedagógica, formas, claves y puntajes.'],scan:['Importar / Escanear','Carga por lote de hojas y PDF.'],review:['Revisión','Solo incidencias que requieren intervención.'],settings:['Configuración','Año escolar y valores predeterminados.'],results:['Resultados','Análisis de desempeño de evaluaciones escaneadas.']};
-function showView(v,preserveEditor=false){$$('.view').forEach(x=>x.classList.toggle('active',x.id===v));$$('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===v));$('#viewTitle').textContent=meta[v][0];$('#viewSubtitle').textContent=meta[v][1];if(v==='dashboard')renderDashboard();if(v==='courses')renderCourses();if(v==='calendar')renderCalendar();if(v==='evaluations'){if(!preserveEditor)closeEditor();renderEvaluations()}if(v==='scan')renderScan();if(v==='review')renderReview();if(v==='results')renderResults();if(v==='settings')renderSettings();renderStats()}
+const meta={dashboard:['Inicio','Gestión de evaluaciones, cursos y lectura OMR.'],courses:['Cursos','Estudiantes e historial de evaluaciones por año.'],calendar:['Calendario','Agenda simple de evaluaciones asociadas al lector.'],evaluations:['Evaluaciones','Configuración pedagógica, formas, claves y puntajes.'],scan:['Importar / Escanear','Carga por lote de hojas y PDF.'],settings:['Configuración','Año escolar y valores predeterminados.'],results:['Resultados','Análisis de desempeño de evaluaciones escaneadas.']};
+function showView(v,preserveEditor=false){$$('.view').forEach(x=>x.classList.toggle('active',x.id===v));$$('.nav button').forEach(x=>x.classList.toggle('active',x.dataset.view===v));$('#viewTitle').textContent=meta[v][0];$('#viewSubtitle').textContent=meta[v][1];if(v==='dashboard')renderDashboard();if(v==='courses')renderCourses();if(v==='calendar')renderCalendar();if(v==='evaluations'){if(!preserveEditor)closeEditor();renderEvaluations()}if(v==='scan')renderScan();if(v==='results')renderResults();if(v==='settings')renderSettings();renderStats()}
 
 
 function compactOMRForStorage(o){
@@ -333,7 +333,11 @@ async function savePageResult(page){
   persist();
   await saveCorrectionEvidence(page,key);
 }
-function updateStoredResultFromPage(page){savePageResult(page)}
+function updateStoredResultFromPage(page){
+  const key=page?.omr?resultKeyForPage(page,page.omr):null;
+  if(!key||!state.results.some(r=>r.key===key))return;
+  savePageResult(page);
+}
 
 function recalcStoredResultsForEvaluation(eid){
   const ev=state.evaluations.find(e=>e.id===eid);if(!ev)return;
@@ -1945,10 +1949,23 @@ function renderScan(){
   $('#pageGrid').innerHTML=pages.length?pages.map((p,i)=>`<div class="page-card">
     <div class="thumb" id="thumb-${i}">${p.thumb?`<img src="${p.thumb}" alt="">`:'<span class="muted">Vista previa</span>'}</div>
     <div class="body"><strong>${esc(p.label)}</strong><div class="meta">${p.width&&p.height?`${p.width} × ${p.height}px`:'Página preparada'}</div>
-    <div class="flags"><span class="flag ok">Lista</span><span class="flag">${esc(p.form||'Forma sin confirmar')}</span>${p.omr?`<span class="flag ${p.omr.ok?'read':'fail'}">${p.omr.ok?'OMR leído':'OMR con problema'}</span>`:''}${state.review.filter(r=>r.file===p.label).length?`<span class="flag warn">⚠ Revisar (${state.review.filter(r=>r.file===p.label).length})</span>`:(p.omr?.ok&&!p.omr?.studentMatch?.exact?'<span class="flag warn">⚠ Identificación pendiente</span>':'')}</div>
+    <div class="flags"><span class="flag ok">Lista</span><span class="flag">${esc(p.form||'Forma sin confirmar')}</span>${p.omr?`<span class="flag ${p.omr.ok?'read':'fail'}">${p.omr.ok?'OMR leído':'OMR con problema'}</span>`:''}${p.finalized?'<span class="flag saved-badge">Guardado</span>':(p.draftAnalyzed?'<span class="flag draft-badge">Borrador</span>':'')}${state.review.filter(r=>r.file===p.label).length?`<span class="flag warn">⚠ Revisar (${state.review.filter(r=>r.file===p.label).length})</span>`:(p.omr?.ok&&!p.omr?.studentMatch?.exact?'<span class="flag warn">⚠ Identificación pendiente</span>':'')}</div>
     ${p.omr?renderOMRCard(p.omr):''}
     </div>
   </div>`).join(''):'';
+  const labels=new Set(pages.map(p=>p.label));
+  const pending=state.review.filter(r=>labels.has(r.file));
+  const analyzed=pages.filter(p=>p.omr);
+  const unsaved=pages.filter(p=>p.omr?.ok&&!p.finalized);
+  if($('#reviewScanIssues'))$('#reviewScanIssues').disabled=!pending.length;
+  if($('#saveScanChanges'))$('#saveScanChanges').disabled=!unsaved.length;
+  if($('#prepareQueue'))$('#prepareQueue').disabled=!state.queue.length;
+  if($('#scanFinalizeStatus')){
+    $('#scanFinalizeStatus').textContent=analyzed.length
+      ? `${analyzed.length} hoja(s) analizada(s) · ${pending.length} anomalía(s) pendiente(s) · ${pages.filter(p=>p.finalized).length} guardada(s)`
+      : (pages.length?'Las capturas de cámara ya están preparadas; puedes analizar OMR.':'');
+  }
+  renderReview();
 }
 
 function renderOMRCard(o){
@@ -1978,9 +1995,11 @@ function renderScanForms(){
 }
 
 function renderReview(){
-  const box=$('#reviewList');
-  if(!state.review.length){box.innerHTML='<div class="empty">No hay incidencias pendientes.</div>';return}
-  box.innerHTML=state.review.map(r=>{
+  const box=$('#reviewList');if(!box)return;
+  const labels=new Set((state.scanPages||[]).map(p=>p.label));
+  const current=state.review.filter(r=>labels.has(r.file));
+  if(!current.length){box.innerHTML='<div class="empty">No hay anomalías pendientes en este lote.</div>';return}
+  box.innerHTML=current.map(r=>{
     const page=(state.scanPages||[]).find(p=>p.label===r.file);
 
     if(r.type==='Revisar RUN' && page?.omr){
@@ -2043,7 +2062,7 @@ function renderReview(){
             const labels=a.metrics?.labels||['A','B','C','D'].slice(0,a.scores?.length||4);
             const scoreText=labels.map((l,i)=>`${l}: ${Math.round((a.scores?.[i]||0)*100)}%`).join(' · ');
             return `<div class="answer-review-row">
-              ${a.crop?`<img src="${a.crop}" alt="Pregunta ${a.n}">`:`<div class="empty">P${a.n}</div>`}
+              <div>${a.crop?`<img src="${a.crop}" alt="Zona alrededor de pregunta ${a.n}"><div class="review-context-note">Zona amplia alrededor del punto que analizó el lector. Úsala para verificar si existe desplazamiento de filas.</div>`:`<div class="empty">P${a.n}</div>`}</div>
               <div>
                 <strong>Pregunta ${a.n}</strong>
                 <div class="read-metrics">
@@ -2213,12 +2232,12 @@ function renderDataIntegrity(){
 
 
 const AppArchitecture={
-  version:'0.35',
+  version:'0.36',
   modules:{
     data:{name:'Datos',description:'Persistencia, identidad longitudinal opcional e integridad.',get snapshot(){return databaseSnapshot},get persist(){return persist},get audit(){return dataIntegrityReport}},
     evidence:{name:'Evidencias',description:'Imágenes corregidas asociadas a resultados.',get put(){return evidencePut},get get(){return evidenceGet},get remove(){return evidenceDelete},get keys(){return evidenceKeys}},
-    omr:{name:'Motor OMR',description:'Lectura geométrica, RUN y respuestas.',get analyze(){return analyzeOMRPage}},
-    review:{name:'Revisión',description:'Resolución manual de RUN y respuestas ambiguas.',get render(){return renderReview},get identify(){return saveResultIdentity}},
+    omr:{name:'Motor OMR',description:'Captura, lectura geométrica, RUN y respuestas en borrador.',get analyze(){return analyzeOMRPage}},
+    review:{name:'Revisión integrada',description:'Resolución manual de RUN y respuestas dentro del lote antes de guardar.',get render(){return renderReview},get identify(){return saveResultIdentity}},
     results:{name:'Resultados',description:'Cálculo, vistas e historial de desempeño.',get rows(){return resultRowsForEvaluation},get render(){return renderResults}},
     backup:{name:'Respaldos',description:'Exportación ligera/completa y restauración.',get light(){return exportBackup},get full(){return exportFullBackup},get restore(){return importBackupFile}}
   }
@@ -2317,7 +2336,10 @@ $('#clearQueue').onclick=()=>{
   // Los resultados ya corregidos quedan guardados de forma permanente.
 };
 $('#prepareQueue').onclick=async()=>{
-  if(!state.queue.length)return alert('No hay archivos en el lote.');
+  if(!state.queue.length){
+    if((state.scanPages||[]).some(p=>p.kind==='camera'))return alert('Las capturas de cámara ya están preparadas automáticamente. Puedes pulsar “Analizar OMR”.');
+    return alert('No hay archivos para preparar.');
+  }
   if(!$('#scanEvaluationSelect').value)return alert('Selecciona una evaluación.');
   const btn=$('#prepareQueue');btn.disabled=true;btn.textContent='Preparando…';
   $('#scanProgressWrap').classList.remove('hidden');
@@ -2350,11 +2372,65 @@ $('#prepareQueue').onclick=async()=>{
   }catch(err){
     console.error(err);alert('Ocurrió un problema al preparar el lote: '+err.message);
   }finally{
-    btn.disabled=false;btn.textContent='Preparar páginas';
+    btn.disabled=false;btn.textContent='Preparar archivos';
     setTimeout(()=>$('#scanProgressWrap').classList.add('hidden'),1200);
     renderScan();
   }
 };
+
+function currentBatchReviewIssues(){
+  const labels=new Set((state.scanPages||[]).map(p=>p.label));
+  return state.review.filter(r=>labels.has(r.file));
+}
+function openBatchReview(){
+  const panel=$('#scanReviewPanel');if(!panel)return;
+  panel.classList.remove('hidden');
+  renderReview();
+  panel.scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function finalizeScanBatch(){
+  const pages=(state.scanPages||[]).filter(p=>p.omr?.ok&&!p.finalized);
+  if(!pages.length)return alert('No hay hojas analizadas pendientes de guardar.');
+  const pending=currentBatchReviewIssues();
+  const pendingLabels=new Set(pending.map(r=>r.file));
+  const clean=pages.filter(p=>!pendingLabels.has(p.label));
+  const unresolved=pages.filter(p=>pendingLabels.has(p.label));
+
+  if(unresolved.length){
+    const ok=confirm(`Hay datos sin revisar en ${unresolved.length} hoja(s).\n\nSi no se revisan, esas hojas no se traspasarán al curso y sus datos pendientes se perderán. Las ${clean.length} hoja(s) sin anomalías sí se guardarán.\n\n¿Continuar?`);
+    if(!ok){openBatchReview();return}
+  }
+  if(!clean.length&&unresolved.length){
+    if(!confirm('Todas las hojas tienen datos pendientes. Si continúas, no se guardará ningún resultado de este lote. ¿Continuar?'))return;
+  }
+
+  const btn=$('#saveScanChanges');if(btn){btn.disabled=true;btn.textContent='Guardando…'}
+  let saved=0;
+  try{
+    for(const p of clean){
+      await savePageResult(p);
+      p.finalized=true;
+      saved++;
+    }
+    if(unresolved.length){
+      const omitLabels=new Set(unresolved.map(p=>p.label));
+      state.review=state.review.filter(r=>!omitLabels.has(r.file));
+      unresolved.forEach(p=>{p.omitted=true;p.draftAnalyzed=false});
+      state.scanPages=state.scanPages.filter(p=>!omitLabels.has(p.label));
+    }
+    const eid=$('#scanEvaluationSelect')?.value;
+    const ev=state.evaluations.find(e=>e.id===eid);
+    if(ev&&saved)ev.status='escaneada';
+    persist();renderReview();renderScan();renderStats();renderDashboard();renderCourses();
+    alert(`${saved} hoja(s) traspasada(s) al curso${unresolved.length?` · ${unresolved.length} hoja(s) con datos sin revisar fueron omitidas`:''}.`);
+  }finally{
+    if(btn){btn.textContent='Guardar cambios';btn.disabled=false}
+    renderScan();
+  }
+}
+$('#reviewScanIssues').onclick=openBatchReview;
+$('#saveScanChanges').onclick=finalizeScanBatch;
+
 function updateScanProgress(done,total,text){
   const pct=total?Math.round(done/total*100):0;
   $('#scanProgressBar').style.width=pct+'%';$('#scanProgressText').textContent=text||'';
@@ -2568,7 +2644,7 @@ $('#analyzeOMR').onclick=async()=>{
     updateScanProgress(i,total,`Leyendo ${i+1} de ${total}: ${p.label}`);
     try{
       p.omr=await analyzeOMRPage(p,ev);
-      if(p.omr.ok)savePageResult(p);
+      if(p.omr.ok){p.draftAnalyzed=true;p.finalized=false;}
       if(!p.omr.ok){
         state.review.push({id:uid(),source:'omr',type:'Reescanear hoja',file:p.label,detail:p.omr.error||'No se pudo detectar la plantilla.'});
       }else{
@@ -2597,6 +2673,7 @@ $('#analyzeOMR').onclick=async()=>{
     await new Promise(r=>setTimeout(r,15));
   }
   persist();renderReview();renderStats();renderScan();
+  if(currentBatchReviewIssues().length)$('#scanReviewPanel')?.classList.remove('hidden');
   btn.disabled=false;btn.textContent='Analizar OMR';
   setTimeout(()=>$('#scanProgressWrap').classList.add('hidden'),1000);
 };
@@ -2720,8 +2797,10 @@ async function analyzeOMRPage(page,ev){
     if(ar.status==='ambiguous'){
       const pts=centers.filter(Boolean);
       if(pts.length){
-        const minx=Math.min(...pts.map(p=>p.x))-82,maxx=Math.max(...pts.map(p=>p.x))+34;
-        const miny=Math.min(...pts.map(p=>p.y))-26,maxy=Math.max(...pts.map(p=>p.y))+26;
+        const minx=Math.min(...pts.map(p=>p.x))-95,maxx=Math.max(...pts.map(p=>p.x))+42;
+        // Contexto vertical amplio: si existe un pequeño desplazamiento geométrico
+        // se muestran también las filas vecinas y el número impreso de la pregunta.
+        const miny=Math.min(...pts.map(p=>p.y))-105,maxy=Math.max(...pts.map(p=>p.y))+105;
         ar.crop=cropCanonicalRegion(c,ctx,H,minx,miny,maxx,maxy);
       }
     }
@@ -3033,4 +3112,4 @@ $('#saveSchoolYear').onclick=()=>{
  const i=state.years.findIndex(y=>Number(y.year)===year);if(i>=0)state.years[i]=obj;else state.years.push(obj);
  logActivity('school_year_saved',`Calendario ${year}`,{year});persist();renderSettings();renderDashboard();renderCourses();renderCalendar();alert(`Calendario ${year} guardado.`);
 };$('#saveSettings').onclick=()=>{state.settings={threshold:Number($('#settingThreshold').value)||60,minGrade:Number($('#settingMinGrade').value)||1,passGrade:Number($('#settingPassGrade').value)||4,maxGrade:Number($('#settingMaxGrade').value)||7};persist();alert('Escala predeterminada guardada.')};
-persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.35 activa';setTimeout(()=>rt.remove(),2500);
+persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.36 activa';setTimeout(()=>rt.remove(),2500);
