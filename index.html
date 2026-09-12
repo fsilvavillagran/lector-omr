@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#17212b" />
-<title>Lector OMR Docente v0.37.1 PWA</title>
+<title>Lector OMR Docente v0.37.2 PWA</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -12,7 +12,7 @@
 <body>
 <div class="app">
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.37.1 · PWA</span></div></div>
+  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.37.2 · PWA</span></div></div>
   <nav class="nav">
     <button class="active" data-view="dashboard" data-short="Inicio">Inicio</button>
     <button data-view="courses" data-short="Cursos">Cursos</button>
@@ -301,6 +301,15 @@
 </div>
 
 <div id="runtime" class="runtime">Cargando…</div>
-<script src="js/app.js"></script>
-<script>if('serviceWorker' in navigator&&location.protocol!=='file:')window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));</script></body>
+<script src="js/app.js?v=0.37.2"></script>
+<script>
+if('serviceWorker' in navigator && location.protocol!=='file:'){
+  window.addEventListener('load', async ()=>{
+    try{
+      const reg = await navigator.serviceWorker.register('./sw.js?v=0.37.2');
+      await reg.update();
+    }catch(err){ console.warn('SW',err); }
+  });
+}
+</script></body>
 </html>
