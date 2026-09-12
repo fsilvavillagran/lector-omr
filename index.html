@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#17212b" />
-<title>Lector OMR Docente v0.36 PWA</title>
+<title>Lector OMR Docente v0.37 PWA</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -12,7 +12,7 @@
 <body>
 <div class="app">
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.36 · PWA</span></div></div>
+  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.37 · PWA</span></div></div>
   <nav class="nav">
     <button class="active" data-view="dashboard" data-short="Inicio">Inicio</button>
     <button data-view="courses" data-short="Cursos">Cursos</button>
@@ -118,7 +118,7 @@
         <label class="secondary" style="cursor:pointer">Tomar foto con cámara<input id="cameraCaptureFallback" type="file" accept="image/*" capture="environment"></label>
       </div>
       <div class="camera-help">La cámara en vivo requiere HTTPS o localhost. Si abres el HTML directamente y el navegador bloquea la cámara, usa “Tomar foto con cámara” como alternativa.</div>
-      <div class="actions">
+      <div id="scanWorkActions" class="actions scan-actions-empty-hidden hidden">
         <button id="clearQueue" class="secondary">Vaciar lote</button>
         <button id="prepareQueue" class="primary">Preparar archivos</button>
         <button id="analyzeOMR" class="primary" disabled>Analizar OMR</button>
@@ -127,10 +127,10 @@
         <div class="progress"><div id="scanProgressBar"></div></div>
         <div id="scanProgressText" class="meta" style="margin-top:5px"></div>
       </div>
-      <div id="batchSummary" class="batch-summary"></div>
+      <div id="batchSummary" class="batch-summary hidden"></div>
       <div id="queueList" class="queue"></div>
       <div id="pageGrid" class="page-grid" style="margin-top:14px"></div>
-      <div class="scan-finalize">
+      <div id="scanFinalize" class="scan-finalize hidden">
         <button id="reviewScanIssues" class="secondary" disabled>Revisar anomalías</button>
         <button id="saveScanChanges" class="primary" disabled>Guardar cambios</button>
         <span id="scanFinalizeStatus" class="meta"></span>
@@ -148,7 +148,7 @@
       <div class="step"><strong>3. Detectar plantilla</strong><br>Busca los cuatro cuadrados negros exteriores de tu plantilla actual.</div>
       <div class="step"><strong>4. Leer RUN y respuestas</strong><br>Lee el RUN numérico y las burbujas A–D usando la geometría de tu hoja actual.</div>
       <div class="step"><strong>5. Revisar y guardar</strong><br>Las anomalías se corrigen dentro de este mismo lote. Solo al pulsar “Guardar cambios” los resultados se traspasan al curso.</div>
-      <div class="notice warning">La v0.36 integra revisión y guardado dentro del mismo flujo de escaneo. Los resultados quedan en borrador hasta pulsar “Guardar cambios”. El lector sigue amarrado a tu plantilla actual. En Revisión ahora puedes ver el recorte que leyó el algoritmo, confirmar/cambiar el estudiante, ingresar un RUN manual o corregir una respuesta ambigua.</div>
+      <div class="notice warning">La v0.37 usa cámara a pantalla completa, contador de hojas y un flujo directo: capturar → cerrar y analizar OMR → revisar/guardar. El lector sigue amarrado a tu plantilla actual. En Revisión ahora puedes ver el recorte que leyó el algoritmo, confirmar/cambiar el estudiante, ingresar un RUN manual o corregir una respuesta ambigua.</div>
     </aside>
   </div>
 </section>
@@ -202,7 +202,7 @@
       <p class="mini-note">Desde esta versión los datos persistentes también se guardan como una base JSON unificada. La interfaz sigue funcionando igual; este cambio prepara la migración futura a una base local de la app.</p>
     </article>
     <article class="panel" style="margin-top:16px">
-      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.36</span></div>
+      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.37</span></div>
       <div id="architectureSummary"></div>
       <div class="actions"><button id="runArchitectureCheck" class="secondary">Ejecutar autodiagnóstico</button></div>
       <p class="mini-note">La distribución sigue siendo un único archivo HTML para facilitar las pruebas. Internamente las funciones principales siguen agrupadas detrás de servicios definidos. La identidad longitudinal solo se vincula cuando el usuario lo confirma.</p>
@@ -219,32 +219,32 @@
 
 
 <div id="cameraModal" class="modal hidden">
-  <div class="backdrop" onclick="closeCameraMode()"></div>
-  <div class="modal-card" style="max-width:900px">
-    <div class="dialog-head"><h2>Cámara OMR experimental</h2><button class="xbtn" onclick="closeCameraMode()">×</button></div>
+  <div class="camera-fullscreen">
+    <div class="camera-topbar">
+      <div class="title">Cámara OMR</div>
+      <div class="camera-page-counter"><span id="cameraCaptureCount">0</span> hoja(s)</div>
+    </div>
     <div class="camera-stage">
       <video id="cameraVideo" playsinline autoplay muted></video>
       <div id="cameraFlash" class="camera-flash"></div>
       <div class="camera-guide"></div>
       <div id="cameraLiveStatus" class="camera-status warn">
         <span id="cameraStatusText">Iniciando cámara…</span>
-        <span id="cameraMarkerCount" class="camera-marker-count">0/4 marcadores</span>
+        <span id="cameraMarkerCount" class="camera-marker-count">0/4</span>
       </div>
     </div>
     <canvas id="cameraProbeCanvas" class="camera-hidden-canvas"></canvas>
     <canvas id="cameraCaptureCanvas" class="camera-hidden-canvas"></canvas>
-    <div class="camera-help">Encuadra la hoja completa procurando que los cuatro cuadrados negros estén visibles. La cámara ahora valida también la geometría de esos cuatro marcadores para evitar confundir partes del QR con cuadrados de referencia.</div>
     <div id="cameraLastCapture"></div>
-    <div class="actions">
-      <span class="meta">Capturas agregadas al lote: <span id="cameraCaptureCount" class="camera-counter">0</span></span>
-      <button id="cameraCaptureAnyway" class="secondary">Capturar igualmente</button>
-      <button id="cameraCaptureReady" class="primary" disabled>Capturar hoja</button>
-      <button class="secondary" onclick="closeCameraMode()">Cerrar cámara</button>
+    <div class="camera-bottom-bar">
+      <button id="cameraClose" class="secondary">Cerrar cámara</button>
+      <button id="cameraCaptureReady" class="primary capture-main" disabled>Capturar</button>
+      <button id="cameraAnalyzeClose" class="secondary" disabled>Cerrar y analizar OMR</button>
     </div>
   </div>
 </div>
 
-<div id="studentAddModal" class="modal hidden">
+<div id="studentAddModal class="modal hidden">
   <div class="backdrop" data-close="studentAddModal"></div>
   <div class="modal-card" style="max-width:680px">
     <div class="dialog-head"><h2>Agregar estudiante</h2><button class="xbtn" data-close="studentAddModal">×</button></div>

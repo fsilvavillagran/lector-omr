@@ -1,12 +1,12 @@
-# Lector OMR Docente v0.36
+# Lector OMR Docente v0.37
 
-Nuevo flujo integrado de escaneo:
+Cambios de experiencia móvil:
 
-1. Las capturas de cámara quedan preparadas automáticamente; **Preparar archivos** se usa solo para JPG/PNG/PDF cargados.
-2. **Analizar OMR** genera un borrador. Ya no traspasa resultados inmediatamente al curso.
-3. Las anomalías aparecen en la misma pantalla de Importar / Escanear.
-4. **Revisar anomalías** lleva al bloque de revisión del lote.
-5. **Guardar cambios** traspasa al curso solo las hojas sin anomalías pendientes.
-6. Si quedan datos sin revisar, la app advierte que esas hojas se perderán y no se traspasarán si se continúa.
-7. Se eliminó la pestaña independiente “Revisión”.
-8. Los recortes ambiguos tienen mucho más contexto vertical para que pueda verse el número impreso de la pregunta y detectar desplazamientos de fila.
+- Cámara OMR a pantalla completa.
+- Contador discreto de hojas capturadas en la parte superior.
+- Se elimina “Capturar igualmente”.
+- **Capturar** solo se habilita cuando hay 4/4 marcadores y geometría válida.
+- **Cerrar y analizar OMR** pide confirmación y analiza automáticamente las capturas de esa sesión.
+- **Cerrar cámara** advierte si existen capturas pendientes; al confirmar, solo esas capturas de la sesión se descartan.
+- Los botones Preparar/Analizar y Revisar/Guardar no aparecen hasta que exista trabajo correspondiente.
+- **Preparar archivos** solo aparece para archivos JPG/PNG/PDF cargados. Las capturas de cámara ya vienen preparadas.

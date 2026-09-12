@@ -1957,14 +1957,25 @@ function renderScan(){
   const pending=state.review.filter(r=>labels.has(r.file));
   const analyzed=pages.filter(p=>p.omr);
   const unsaved=pages.filter(p=>p.omr?.ok&&!p.finalized);
-  if($('#reviewScanIssues'))$('#reviewScanIssues').disabled=!pending.length;
-  if($('#saveScanChanges'))$('#saveScanChanges').disabled=!unsaved.length;
-  if($('#prepareQueue'))$('#prepareQueue').disabled=!state.queue.length;
-  if($('#scanFinalizeStatus')){
-    $('#scanFinalizeStatus').textContent=analyzed.length
-      ? `${analyzed.length} hoja(s) analizada(s) · ${pending.length} anomalía(s) pendiente(s) · ${pages.filter(p=>p.finalized).length} guardada(s)`
-      : (pages.length?'Las capturas de cámara ya están preparadas; puedes analizar OMR.':'');
+  const hasWork=state.queue.length>0||pages.length>0;
+  const hasAnalyzed=analyzed.length>0;
+  $('#scanWorkActions')?.classList.toggle('hidden',!hasWork);
+  $('#batchSummary')?.classList.toggle('hidden',!hasWork);
+  $('#scanFinalize')?.classList.toggle('hidden',!hasAnalyzed);
+  if($('#clearQueue'))$('#clearQueue').classList.toggle('hidden',!hasWork);
+  if($('#prepareQueue'))$('#prepareQueue').classList.toggle('hidden',!state.queue.length);
+  if($('#analyzeOMR'))$('#analyzeOMR').classList.toggle('hidden',!pages.length);
+  if($('#reviewScanIssues')){
+    $('#reviewScanIssues').classList.toggle('hidden',!pending.length);
+    $('#reviewScanIssues').disabled=!pending.length;
   }
+  if($('#saveScanChanges'))$('#saveScanChanges').disabled=!unsaved.length;
+  if($('#scanFinalizeStatus')){
+    $('#scanFinalizeStatus').textContent=hasAnalyzed
+      ? `${analyzed.length} hoja(s) analizada(s) · ${pending.length} anomalía(s) pendiente(s) · ${pages.filter(p=>p.finalized).length} guardada(s)`
+      : '';
+  }
+  if(!hasAnalyzed)$('#scanReviewPanel')?.classList.add('hidden');
   renderReview();
 }
 
@@ -2232,7 +2243,7 @@ function renderDataIntegrity(){
 
 
 const AppArchitecture={
-  version:'0.36',
+  version:'0.37',
   modules:{
     data:{name:'Datos',description:'Persistencia, identidad longitudinal opcional e integridad.',get snapshot(){return databaseSnapshot},get persist(){return persist},get audit(){return dataIntegrityReport}},
     evidence:{name:'Evidencias',description:'Imágenes corregidas asociadas a resultados.',get put(){return evidencePut},get get(){return evidenceGet},get remove(){return evidenceDelete},get keys(){return evidenceKeys}},
@@ -2314,8 +2325,9 @@ $('#allOnePoint').onclick=()=>{currentItems().forEach(q=>q.points=1);renderQuest
 $('#testConfigImport').onchange=e=>{importTestConfig(e.target.files[0]);e.target.value=''};$('#exportTestTemplate').onclick=exportTestTemplate;
 
 $('#openCamera').onclick=openCameraMode;
-$('#cameraCaptureReady').onclick=()=>captureCameraFrame(false);
-$('#cameraCaptureAnyway').onclick=()=>captureCameraFrame(true);
+$('#cameraCaptureReady').onclick=()=>captureCameraFrame();
+$('#cameraClose').onclick=closeCameraMode;
+$('#cameraAnalyzeClose').onclick=closeCameraAndAnalyze;
 $('#cameraCaptureFallback').onchange=e=>{const f=e.target.files?.[0];if(f)addFallbackCameraFile(f);e.target.value=''};
 
 $('#scanFiles').onchange=e=>{
@@ -2470,6 +2482,7 @@ let cameraStream=null;
 let cameraProbeTimer=null;
 let cameraReady=false;
 let cameraSessionCaptures=0;
+let cameraSessionLabels=[];
 
 async function openCameraMode(){
   if(!$('#scanEvaluationSelect')?.value){
@@ -2477,8 +2490,8 @@ async function openCameraMode(){
     return;
   }
   openModal('cameraModal');
-  cameraSessionCaptures=0;
-  $('#cameraCaptureCount').textContent='0';if($('#cameraLastCapture'))$('#cameraLastCapture').innerHTML='';
+  cameraSessionCaptures=0;cameraSessionLabels=[];
+  $('#cameraCaptureCount').textContent='0';if($('#cameraAnalyzeClose'))$('#cameraAnalyzeClose').disabled=true;if($('#cameraLastCapture'))$('#cameraLastCapture').innerHTML='';
   setCameraStatus('Iniciando cámara…',0,'warn');
   try{
     if(!navigator.mediaDevices?.getUserMedia){
@@ -2507,7 +2520,7 @@ function setCameraStatus(text,count=0,kind='warn'){
   const box=$('#cameraLiveStatus');
   if(box){box.classList.remove('ready','warn','bad');box.classList.add(kind)}
   if($('#cameraStatusText'))$('#cameraStatusText').textContent=text;
-  if($('#cameraMarkerCount'))$('#cameraMarkerCount').textContent=`${count}/4 marcadores`;
+  if($('#cameraMarkerCount'))$('#cameraMarkerCount').textContent=`${count}/4`;
   cameraReady=count===4;
   if($('#cameraCaptureReady'))$('#cameraCaptureReady').disabled=!cameraReady;
 }
@@ -2549,45 +2562,65 @@ function cameraTimestamp(){
   const d=new Date();
   return d.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 }
-async function captureCameraFrame(force=false){
+async function captureCameraFrame(){
   const video=$('#cameraVideo');
   if(!video||!video.videoWidth||!video.videoHeight)return alert('La cámara todavía no está lista.');
-  if(!force&&!cameraReady)return alert('Aún no se detectan los cuatro marcadores. Ajusta el encuadre o usa “Capturar igualmente”.');
+  if(!cameraReady)return;
   const c=$('#cameraCaptureCanvas'),ctx=c.getContext('2d');
   c.width=video.videoWidth;c.height=video.videoHeight;
   ctx.drawImage(video,0,0,c.width,c.height);
   const data=c.toDataURL('image/jpeg',0.9);
   const label=`Cámara ${cameraTimestamp()} · ${cameraSessionCaptures+1}`;
   state.scanPages.push({
-    kind:'camera',
-    sourceName:'Cámara en vivo',
-    label,
-    thumb:data,
-    width:c.width,
-    height:c.height,
-    form:$('#scanFormSelect').value||'',
-    capturedAt:new Date().toISOString()
+    kind:'camera',sourceName:'Cámara en vivo',label,thumb:data,width:c.width,height:c.height,
+    form:$('#scanFormSelect').value||'',capturedAt:new Date().toISOString(),cameraSession:true
   });
+  cameraSessionLabels.push(label);
   cameraSessionCaptures++;
   $('#cameraCaptureCount').textContent=String(cameraSessionCaptures);
-  const flash=$('#cameraFlash');if(flash){flash.classList.add('show');setTimeout(()=>flash.classList.remove('show'),170)}
-  if(navigator.vibrate)try{navigator.vibrate(80)}catch(_){}
-  const preview=$('#cameraLastCapture');
-  if(preview)preview.innerHTML=`<div class="camera-last"><img src="${data}" alt="Última captura"><div><strong>✓ Captura ${cameraSessionCaptures} agregada al lote</strong><div class="meta">${c.width} × ${c.height}px · ${cameraTimestamp()}</div></div></div>`;
-  const okBtn=$('#cameraCaptureReady'),forceBtn=$('#cameraCaptureAnyway');
-  if(okBtn){const old=okBtn.textContent;okBtn.textContent=`✓ Capturada (${cameraSessionCaptures})`;okBtn.disabled=true;setTimeout(()=>{okBtn.textContent=old;okBtn.disabled=!cameraReady},650)}
-  if(forceBtn){forceBtn.disabled=true;setTimeout(()=>forceBtn.disabled=false,650)}
+  if($('#cameraAnalyzeClose'))$('#cameraAnalyzeClose').disabled=false;
+  const flash=$('#cameraFlash');if(flash){flash.classList.add('show');setTimeout(()=>flash.classList.remove('show'),150)}
+  if(navigator.vibrate)try{navigator.vibrate(70)}catch(_){}
+  const okBtn=$('#cameraCaptureReady');
+  if(okBtn){
+    const old=okBtn.textContent;okBtn.textContent=`✓ ${cameraSessionCaptures}`;
+    okBtn.disabled=true;
+    setTimeout(()=>{okBtn.textContent=old;okBtn.disabled=!cameraReady},500);
+  }
   renderScan();
-  setCameraStatus(`Captura ${cameraSessionCaptures} agregada. Puedes escanear otra hoja.`,cameraReady?4:0,cameraReady?'ready':'warn');
+  setCameraStatus(`Captura ${cameraSessionCaptures} agregada`,cameraReady?4:0,cameraReady?'ready':'warn');
+}
+function stopCameraHardware(){
+  stopCameraProbe();
+  if(cameraStream){cameraStream.getTracks().forEach(t=>t.stop());cameraStream=null}
+  const video=$('#cameraVideo');if(video)video.srcObject=null;
+}
+function discardCameraSessionCaptures(){
+  const labels=new Set(cameraSessionLabels);
+  state.scanPages=state.scanPages.filter(p=>!labels.has(p.label));
+  state.review=state.review.filter(r=>!labels.has(r.file));
+  cameraSessionLabels=[];cameraSessionCaptures=0;
+  renderScan();
 }
 function closeCameraMode(){
-  stopCameraProbe();
-  if(cameraStream){
-    cameraStream.getTracks().forEach(t=>t.stop());
-    cameraStream=null;
+  if(cameraSessionLabels.length){
+    const ok=confirm(`Hay ${cameraSessionLabels.length} hoja(s) pendientes de analizar.\n\nSi cierras la cámara, estas capturas se perderán.\n\n¿Continuar?`);
+    if(!ok)return;
+    discardCameraSessionCaptures();
   }
-  const video=$('#cameraVideo');if(video)video.srcObject=null;
+  stopCameraHardware();
   closeModal('cameraModal');
+}
+async function closeCameraAndAnalyze(){
+  if(!cameraSessionLabels.length)return;
+  const count=cameraSessionLabels.length;
+  if(!confirm(`Se analizarán ${count} captura(s) realizadas.\n\n¿Continuar?`))return;
+  const labels=[...cameraSessionLabels];
+  stopCameraHardware();
+  closeModal('cameraModal');
+  cameraSessionLabels=[];cameraSessionCaptures=0;
+  const pages=state.scanPages.filter(p=>labels.includes(p.label));
+  await analyzeOMRPages(pages);
 }
 async function addFallbackCameraFile(file){
   if(!file)return;
@@ -2629,18 +2662,19 @@ const OMR_TEMPLATE={
   runY:[265,295,325,355,385,415,445,475,505,535]
 };
 
-$('#analyzeOMR').onclick=async()=>{
-  if(!state.scanPages.length)return alert('Primero prepara las páginas.');
+async function analyzeOMRPages(pages){
+  if(!pages?.length)return alert('No hay hojas para analizar.');
   const eid=$('#scanEvaluationSelect').value;
   const ev=state.evaluations.find(e=>e.id===eid);
   if(!ev)return alert('Selecciona una evaluación.');
-  const btn=$('#analyzeOMR');btn.disabled=true;btn.textContent='Analizando…';
+  const btn=$('#analyzeOMR');
+  if(btn){btn.disabled=true;btn.textContent='Analizando…'}
   $('#scanProgressWrap').classList.remove('hidden');
-  const total=state.scanPages.length;
-  const labels=new Set(state.scanPages.map(p=>p.label));
+  const total=pages.length;
+  const labels=new Set(pages.map(p=>p.label));
   state.review=state.review.filter(r=>!(r.source==='omr'&&labels.has(r.file)));
   for(let i=0;i<total;i++){
-    const p=state.scanPages[i];
+    const p=pages[i];
     updateScanProgress(i,total,`Leyendo ${i+1} de ${total}: ${p.label}`);
     try{
       p.omr=await analyzeOMRPage(p,ev);
@@ -2673,9 +2707,12 @@ $('#analyzeOMR').onclick=async()=>{
     await new Promise(r=>setTimeout(r,15));
   }
   persist();renderReview();renderStats();renderScan();
-  if(currentBatchReviewIssues().length)$('#scanReviewPanel')?.classList.remove('hidden');
-  btn.disabled=false;btn.textContent='Analizar OMR';
+  if(btn){btn.disabled=false;btn.textContent='Analizar OMR'}
   setTimeout(()=>$('#scanProgressWrap').classList.add('hidden'),1000);
+}
+$('#analyzeOMR').onclick=async()=>{
+  const pages=(state.scanPages||[]).filter(p=>!p.finalized);
+  await analyzeOMRPages(pages);
 };
 
 
@@ -3112,4 +3149,4 @@ $('#saveSchoolYear').onclick=()=>{
  const i=state.years.findIndex(y=>Number(y.year)===year);if(i>=0)state.years[i]=obj;else state.years.push(obj);
  logActivity('school_year_saved',`Calendario ${year}`,{year});persist();renderSettings();renderDashboard();renderCourses();renderCalendar();alert(`Calendario ${year} guardado.`);
 };$('#saveSettings').onclick=()=>{state.settings={threshold:Number($('#settingThreshold').value)||60,minGrade:Number($('#settingMinGrade').value)||1,passGrade:Number($('#settingPassGrade').value)||4,maxGrade:Number($('#settingMaxGrade').value)||7};persist();alert('Escala predeterminada guardada.')};
-persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.36 activa';setTimeout(()=>rt.remove(),2500);
+persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.37 activa';setTimeout(()=>rt.remove(),2500);
