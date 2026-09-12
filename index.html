@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#17212b" />
+<title>Lector OMR Docente v0.34 PWA</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<link rel="stylesheet" href="styles/main.css"><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#1f6f5f"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="OMR Docente"><link rel="apple-touch-icon" href="icons/icon-192.png"></head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.34 · PWA</span></div></div>
+  <nav class="nav">
+    <button class="active" data-view="dashboard" data-short="Inicio">Inicio</button>
+    <button data-view="courses" data-short="Cursos">Cursos</button>
+    <button data-view="calendar" data-short="Agenda">Calendario</button>
+    <button data-view="evaluations" data-short="Pruebas">Evaluaciones</button>
+    <button data-view="scan" data-short="Escanear">Importar / Escanear</button>
+    <button data-view="review" data-short="Revisión">Revisión</button>
+    <button data-view="results" data-short="Resultados">Resultados</button>
+    <button data-view="settings" data-short="Ajustes">Configuración</button>
+  </nav>
+  <div class="side-foot">Los datos de este prototipo se guardan localmente en este navegador.</div>
+</aside>
+<main class="main">
+  <header class="topbar"><div><h1 id="viewTitle">Inicio</h1><p id="viewSubtitle">Gestión de evaluaciones, cursos y lectura OMR.</p></div><button id="topNewEvaluation" class="primary">+ Nueva evaluación</button></header>
+
+  <section id="dashboard" class="view active">
+    <div class="cards"><div class="stat"><span>Cursos</span><strong id="statCourses">0</strong></div><div class="stat"><span>Estudiantes</span><strong id="statStudents">0</strong></div><div class="stat"><span>Evaluaciones</span><strong id="statEvaluations">0</strong></div><div class="stat"><span>Revisión pendiente</span><strong id="statReview">0</strong></div></div>
+    <div class="grid2">
+      <article class="panel"><div class="panel-head"><div><h2>Próximas evaluaciones</h2><p>Agenda de pruebas asociadas a tus cursos.</p></div><button class="secondary small" data-goto="calendar">Ver calendario</button></div><div id="dashboardUpcoming" class="list"></div></article>
+      <article class="panel"><div class="panel-head"><div><h2>Año escolar</h2><p>Marco simple para organizar las evaluaciones.</p></div></div><div id="dashboardSchoolYear"></div></article>
+    </div>
+  </section>
+
+  <section id="courses" class="view">
+    <div id="courseBrowser">
+      <div class="toolbar"><div class="left"><select id="courseYearFilter"></select><input id="courseSearch" placeholder="Buscar curso…"></div><div class="right"><button id="newCourse" class="primary">+ Nuevo curso</button></div></div>
+      <div id="courseList" class="grid3"></div>
+    </div>
+    <div id="courseDetail" class="hidden"></div>
+  </section>
+
+  <section id="calendar" class="view">
+    <div class="toolbar"><div class="left"><select id="calendarYear"></select><select id="calendarCourse"><option value="">Todos los cursos</option></select></div><div class="right"><button id="calendarNewEvaluation" class="primary">+ Agendar evaluación</button></div></div>
+    <div class="panel"><div class="panel-head"><div><h2>Calendario de evaluaciones</h2><p>Solo muestra evaluaciones que usarás con el lector.</p></div></div><div id="calendarList"></div></div>
+  </section>
+
+  <section id="evaluations" class="view">
+    <div id="evaluationBrowser"><div class="toolbar"><div class="left"><input id="evaluationSearch" placeholder="Buscar evaluación o curso…"><select id="evaluationTypeFilter"><option value="">Formativas y sumativas</option><option value="formativa">Formativas</option><option value="sumativa">Sumativas</option></select></div><div class="right"><button id="newEvaluation" class="primary">+ Nueva evaluación</button></div></div><div id="evaluationList" class="list"></div></div>
+    <div id="evaluationEditor" class="hidden">
+      <div class="editor-header"><button id="backEvaluations" class="secondary">← Volver</button><div class="title"><h2 id="editorName"></h2><p id="editorMeta"></p></div><span id="saveState" class="save-note"><span class="ok-dot"></span>Guardado local</span><button id="saveEditor" class="primary">Guardar cambios</button></div>
+      <div class="summary"><div><span>Preguntas</span><strong id="sumQuestions">0</strong></div><div><span>Activas</span><strong id="sumActive">0</strong></div><div><span>Anuladas</span><strong id="sumVoid">0</strong></div><div><span>Puntaje máx.</span><strong id="sumMaxScore">0</strong></div><div><span>Exigencia</span><strong id="sumThreshold">—</strong></div><div><span>Puntaje 4,0</span><strong id="sumPassScore">—</strong></div></div><div class="mini-note" style="margin-top:6px">El puntaje máximo se calcula automáticamente desde las preguntas activas y sus puntajes.</div>
+      <div class="editor-layout">
+        <article class="panel">
+          <div class="panel-head"><div><h3>Preguntas por forma</h3><p>Clave, puntaje, habilidad y contenido. Puedes configurar manualmente o importar una planilla.</p></div></div>
+          <div class="import-box" style="margin-bottom:12px">
+            <div class="settings-grid">
+              <label class="wide">Agregar nueva forma / versión
+  <div style="display:flex;gap:8px;align-items:center;margin-top:5px">
+    <input id="newFormName" style="margin-top:0;flex:1" placeholder="Ej.: A2, B1, PIE-A1">
+    <button id="addForm" type="button" class="secondary small">+ Agregar forma</button>
+  </div>
+</label>
+            </div>
+            <div class="toolbar" style="margin:9px 0 0"><div class="left"><span class="mini-note">Las formas existentes se muestran abajo como pestañas. Para quitar una, selecciónala y usa “Eliminar forma”.</span></div><div class="right"><button id="exportTestTemplate" class="secondary small">Exportar plantilla Excel</button><label class="primary small" style="cursor:pointer">Importar configuración<input id="testConfigImport" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label></div></div>
+            <div class="mini-note">Excel: puedes usar una hoja por forma (A1, A2, PIE-A1...) con columnas Pregunta, Alternativas, Clave, Puntaje, Habilidad y Contenido; o una sola hoja con una columna Forma. CSV importa sobre la forma actualmente seleccionada.</div>
+          </div>
+          <div id="scoringLockBanner"></div>
+          <div id="formTabs" class="form-tabs"></div>
+          <div class="toolbar"><div class="left"><strong id="currentFormLabel"></strong><select id="copyFromForm"></select><button id="copyForm" class="secondary small">Copiar forma</button><button id="deleteCurrentForm" class="danger small" type="button">Eliminar forma</button></div><div class="right"><button id="repairQuestions" class="secondary small">Reconstruir preguntas</button><button id="allOnePoint" class="secondary small">Todas = 1 punto</button><button id="recalcScore" class="secondary small">Recalcular puntaje</button></div></div>
+          <div class="form-config-row">
+            <label>Preguntas de esta forma
+              <input id="formQuestionCount" type="number" min="1" max="100" step="1">
+            </label>
+            <button id="applyFormQuestionCount" class="secondary small" type="button">Cambiar cantidad</button>
+            <label>Alternativas por pregunta
+              <select id="formChoiceCount"><option value="2">A–B</option><option value="3">A–C</option><option value="4">A–D</option></select>
+            </label>
+            <button id="applyFormChoiceCount" class="secondary small" type="button">Cambiar alternativas</button>
+            <span class="mini-note">Ambos cambios afectan solo a la forma seleccionada. También puedes quitar un distractor de una pregunta individual usando ×.</span>
+          </div>
+          <div id="formWarning" class="notice warning hidden"></div>
+          <div class="table-wrap"><table class="qtable"><thead><tr><th>#</th><th>Alternativas / clave correcta</th><th>Puntaje</th><th>Habilidad</th><th>Contenido</th><th title="Anular pregunta">Anular</th></tr></thead><tbody id="questionRows"></tbody></table></div>
+        </article>
+        <aside>
+          <article class="panel sticky"><div class="panel-head"><div><h3>Configuración pedagógica</h3><p>Información común de la evaluación.</p></div></div>
+            <div class="settings-grid"><label class="wide">Nombre de la evaluación<input id="editName" placeholder="Ej. Prueba N.º 4 – Guerra Fría"></label><label class="wide">Unidad<input id="editUnit"></label><label class="wide">Objetivo curricular<textarea id="editObjective"></textarea></label><label>Tipo<select id="editType"><option value="sumativa">Sumativa</option><option value="formativa">Formativa</option></select></label><label>Fecha<input id="editDate" type="date"></label><label>Estado<select id="editStatus"><option value="planificada">Planificada</option><option value="configurada">Configurada</option><option value="aplicada">Aplicada</option><option value="escaneada">Escaneada</option><option value="revisada">Revisada</option><option value="cerrada">Cerrada</option></select></label></div>
+            <div id="gradingBlock"><div class="section-title">Escala chilena</div><div class="settings-grid"><label>Exigencia %<input id="editThreshold" type="number" min="1" max="100" step="0.1"></label><label>Nota mínima<input id="editMinGrade" type="number" min="1" max="7" step="0.1"></label><label>Nota aprobación<input id="editPassGrade" type="number" min="1" max="7" step="0.1"></label><label>Nota máxima<input id="editMaxGrade" type="number" min="1" max="7" step="0.1"></label></div><div class="section-title">Comprobar puntaje</div><div class="settings-grid"><label>Puntaje obtenido<input id="testScore" type="number" min="0" step="0.25"></label><label>Resultado<input id="testResult" readonly></label></div></div>
+            <div id="formativeBlock" class="hidden"><div class="section-title">Evaluación formativa</div><div class="notice">El foco será porcentaje de logro, habilidad, contenido e identificación de necesidades de refuerzo. No se asignará nota automáticamente.</div></div>
+          </article>
+        </aside>
+      </div>
+
+    </div>
+  </section>
+
+  
+<section id="scan" class="view">
+  <div class="scan-layout">
+    <article class="panel">
+      <div class="panel-head">
+        <div><h2>Importar hojas</h2><p>PDF multipágina, JPG o PNG. En esta versión la carga y separación de páginas es real.</p></div>
+      </div>
+      <div class="scan-controls">
+        <label>Evaluación<select id="scanEvaluationSelect"></select></label>
+        <label>Forma por defecto<select id="scanFormSelect"><option value="">Seleccionar evaluación primero</option></select></label>
+      </div>
+      <label class="dropzone">
+        <input id="scanFiles" type="file" multiple accept="application/pdf,image/png,image/jpeg">
+        <strong>Seleccionar hojas o PDF</strong>
+        <span class="muted">Puedes cargar varias imágenes o un PDF multipágina</span>
+      </label>
+      <div class="camera-launch">
+        <button id="openCamera" class="primary">📷 Cámara experimental</button>
+        <label class="secondary" style="cursor:pointer">Tomar foto con cámara<input id="cameraCaptureFallback" type="file" accept="image/*" capture="environment"></label>
+      </div>
+      <div class="camera-help">La cámara en vivo requiere HTTPS o localhost. Si abres el HTML directamente y el navegador bloquea la cámara, usa “Tomar foto con cámara” como alternativa.</div>
+      <div class="actions">
+        <button id="clearQueue" class="secondary">Vaciar lote</button>
+        <button id="prepareQueue" class="primary">Preparar páginas</button>
+        <button id="analyzeOMR" class="primary" disabled>Analizar OMR</button>
+      </div>
+      <div id="scanProgressWrap" class="hidden" style="margin-top:12px">
+        <div class="progress"><div id="scanProgressBar"></div></div>
+        <div id="scanProgressText" class="meta" style="margin-top:5px"></div>
+      </div>
+      <div id="batchSummary" class="batch-summary"></div>
+      <div id="queueList" class="queue"></div>
+      <div id="pageGrid" class="page-grid" style="margin-top:14px"></div>
+    </article>
+
+    <aside class="panel scan-side">
+      <h3>Flujo del lector</h3>
+      <div class="step"><strong>1. Capturar o importar</strong><br>La app puede recibir imágenes/PDF o usar la cámara experimental en vivo.</div>
+      <div class="step"><strong>2. Separar páginas</strong><br>Cada página queda como una hoja independiente del lote.</div>
+      <div class="step"><strong>3. Detectar plantilla</strong><br>Busca los cuatro cuadrados negros exteriores de tu plantilla actual.</div>
+      <div class="step"><strong>4. Leer RUN y respuestas</strong><br>Lee el RUN numérico y las burbujas A–D usando la geometría de tu hoja actual.</div>
+      <div class="step"><strong>5. Revisar incidencias</strong><br>Solo se mostrarán dudas o páginas que deban reescanearse.</div>
+      <div class="notice warning">La v0.34 incorpora una primera cámara experimental con detección en vivo de los cuatro marcadores. El lector sigue amarrado a tu plantilla actual. En Revisión ahora puedes ver el recorte que leyó el algoritmo, confirmar/cambiar el estudiante, ingresar un RUN manual o corregir una respuesta ambigua.</div>
+    </aside>
+  </div>
+</section>
+<section id="review" class="view"><div class="panel"><div class="panel-head"><div><h2>Revisión</h2><p>Solo incidencias: RUN, respuestas dudosas o páginas que requieren reescaneo.</p></div></div><div id="reviewList"></div></div></section>
+
+  
+<section id="results" class="view">
+  <div class="panel">
+    <div class="panel-head">
+      <div><h2>Resultados y análisis</h2><p>Resultados de las hojas ya leídas y revisadas en el lote actual.</p></div>
+      <div class="report-actions">
+        <button id="exportResultsCsv" class="secondary small">Exportar CSV</button>
+        <button id="resultScopeStudent" class="secondary small">Vista estudiante</button>
+        <button id="resultScopeCourse" class="primary small">Vista curso</button>
+        <button id="printStudentReports" class="secondary small">Imprimir informe individual</button>
+        <button id="printCourseReport" class="secondary small">Informe de curso</button>
+      </div>
+    </div>
+    <div class="result-filters">
+      <label>Evaluación<select id="resultsEvaluation"></select></label>
+      <label>Forma<select id="resultsForm"><option value="">General</option></select></label>
+      <label id="resultsStudentWrap" class="hidden">Estudiante<select id="resultsStudent"></select></label>
+      <label>Vista<select id="resultsViewMode"><option value="summary">Resumen</option><option value="questions">Preguntas</option><option value="skills">Habilidades</option><option value="contents">Contenidos</option></select></label>
+      <button id="refreshResults" class="primary">Actualizar</button>
+    </div>
+    <div id="resultsSummary" class="result-summary"></div>
+    <div id="resultsBody"></div>
+    <div id="courseAnalysisPreview"></div>
+    <div id="evaluationActivity"></div>
+  </div>
+</section>
+
+<section id="settings" class="view">
+    <div class="grid2"><article class="panel"><div class="panel-head"><div><h2>Calendarios escolares</h2><p>Puedes mantener calendarios independientes para años anteriores y futuros.</p></div></div>
+<div class="year-toolbar"><label>Calendario seleccionado<select id="settingsYear"></select></label><button id="addSchoolYear" class="secondary">+ Agregar año</button></div>
+<div class="settings-grid"><label>Inicio de clases<input id="schoolStart" type="date"></label><label>Inicio vacaciones<input id="vacStart" type="date"></label><label>Fin vacaciones<input id="vacEnd" type="date"></label><label>Término de clases<input id="schoolEnd" type="date"></label></div>
+<div class="actions"><button id="saveSchoolYear" class="primary">Guardar calendario</button><button id="deleteSchoolYear" class="danger">Eliminar calendario</button></div>
+<div id="schoolYearList" class="year-list"></div>
+<p class="mini-note">Agregar o cambiar un calendario no modifica los cursos ni evaluaciones de otros años. Un calendario con cursos asociados no se puede eliminar.</p>
+</article>
+      <article class="panel"><div class="panel-head"><div><h2>Escala predeterminada</h2><p>Se aplica a nuevas evaluaciones sumativas.</p></div></div><div class="settings-grid"><label>Exigencia %<input id="settingThreshold" type="number" step="0.1"></label><label>Nota mínima<input id="settingMinGrade" type="number" step="0.1"></label><label>Nota aprobación<input id="settingPassGrade" type="number" step="0.1"></label><label>Nota máxima<input id="settingMaxGrade" type="number" step="0.1"></label></div><div class="actions"><button id="saveSettings" class="primary">Guardar escala</button></div></article></div>
+    <article class="panel" style="margin-top:16px"><div class="panel-head"><div><h2>Respaldo de datos</h2><p>Exporta cursos, estudiantes y evaluaciones antes de cambios importantes.</p></div></div><div class="backup-row">
+      <button id="exportBackup" class="secondary">Exportar respaldo ligero</button>
+      <button id="exportFullBackup" class="primary">Exportar respaldo completo</button>
+      <label class="secondary" style="cursor:pointer">Importar respaldo<input id="importBackup" type="file" accept="application/json,.json"></label>
+    </div>
+    <p class="mini-note">El respaldo ligero contiene cursos, estudiantes, evaluaciones y resultados. El respaldo completo añade también las imágenes de evidencia de corrección guardadas en este navegador.</p><div id="backupProgress" class="backup-progress hidden"></div></article>
+    <article class="panel" style="margin-top:16px">
+      <div class="panel-head"><div><h2>Estado de los datos</h2><p>Diagnóstico interno para preparar la futura aplicación.</p></div><span class="schema-pill" id="schemaVersionBadge">Esquema —</span></div>
+      <div id="dataIntegritySummary"></div>
+      <div class="actions"><button id="runIntegrityCheck" class="secondary">Verificar integridad</button></div>
+      <p class="mini-note">Desde esta versión los datos persistentes también se guardan como una base JSON unificada. La interfaz sigue funcionando igual; este cambio prepara la migración futura a una base local de la app.</p>
+    </article>
+    <article class="panel" style="margin-top:16px">
+      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.34</span></div>
+      <div id="architectureSummary"></div>
+      <div class="actions"><button id="runArchitectureCheck" class="secondary">Ejecutar autodiagnóstico</button></div>
+      <p class="mini-note">La distribución sigue siendo un único archivo HTML para facilitar las pruebas. Internamente las funciones principales siguen agrupadas detrás de servicios definidos. La identidad longitudinal solo se vincula cuando el usuario lo confirma.</p>
+    </article>
+  </section>
+</main>
+</div>
+
+<div id="evaluationModal" class="modal hidden"><div class="backdrop" data-close="evaluationModal"></div><div class="modal-card"><div class="dialog-head"><h2>Nueva evaluación</h2><button class="xbtn" data-close="evaluationModal">×</button></div><form id="evaluationForm"><div class="form-grid"><label class="wide">Nombre<input id="evName" required placeholder="Ej. Prueba N.º 4 – Guerra Fría"></label><label>Curso<select id="evCourse" required></select></label><label>Fecha<input id="evDate" type="date"></label><label>Tipo<select id="evType"><option value="sumativa">Sumativa</option><option value="formativa">Formativa</option></select></label><label>Estado<select id="evStatus"><option value="planificada">Planificada</option><option value="configurada">Configurada</option></select></label><label class="wide">Unidad<input id="evUnit" placeholder="Ej. Unidad 3: Guerra Fría"></label><label class="wide">Objetivo curricular<textarea id="evObjective" placeholder="OA u objetivo curricular evaluado"></textarea></label><label>N.º preguntas<input id="evQuestions" type="number" min="1" max="100" value="36"></label><label>Alternativas<select id="evChoices"><option value="2">A–B</option><option value="3">A–C</option><option value="4" selected>A–D</option></select></label><label class="wide">Formas / versiones<input id="evForms" placeholder="A1, A2, B1, B2, PIE-A1, PIE-A2"></label></div><div class="hint">Las formas quedan agrupadas en una sola evaluación. Después puedes agregar o quitar formas desde el editor. Cada pregunta comienza con 1 punto.</div><div class="actions"><button type="button" class="secondary" data-close="evaluationModal">Cancelar</button><button type="submit" class="primary">Crear y configurar</button></div></form></div></div>
+
+<div id="courseModal" class="modal hidden"><div class="backdrop" data-close="courseModal"></div><div class="modal-card"><div class="dialog-head"><h2>Nuevo curso</h2><button class="xbtn" data-close="courseModal">×</button></div><form id="courseForm"><div class="form-grid"><label>Año<select id="courseYear"></select></label><label>Nivel<input id="courseLevel" required placeholder="Ej. 2° Medio"></label><label>Letra<input id="courseLetter" required maxlength="4" placeholder="A"></label><label>Asignatura<input id="courseSubject" required placeholder="Historia"></label><label class="wide">Importar estudiantes (opcional)<input id="courseStudentFile" type="file" accept=".xlsx,.xls,.csv"></label></div><div class="hint">El curso quedará guardado dentro del año seleccionado. Puedes importar la nómina ahora o hacerlo después desde el curso.</div><div class="actions"><button type="button" class="secondary" data-close="courseModal">Cancelar</button><button type="submit" class="primary">Crear curso</button></div></form></div></div>
+
+
+
+
+<div id="cameraModal" class="modal hidden">
+  <div class="backdrop" onclick="closeCameraMode()"></div>
+  <div class="modal-card" style="max-width:900px">
+    <div class="dialog-head"><h2>Cámara OMR experimental</h2><button class="xbtn" onclick="closeCameraMode()">×</button></div>
+    <div class="camera-stage">
+      <video id="cameraVideo" playsinline autoplay muted></video>
+      <div class="camera-guide"></div>
+      <div id="cameraLiveStatus" class="camera-status warn">
+        <span id="cameraStatusText">Iniciando cámara…</span>
+        <span id="cameraMarkerCount" class="camera-marker-count">0/4 marcadores</span>
+      </div>
+    </div>
+    <canvas id="cameraProbeCanvas" class="camera-hidden-canvas"></canvas>
+    <canvas id="cameraCaptureCanvas" class="camera-hidden-canvas"></canvas>
+    <div class="camera-help">Encuadra la hoja completa procurando que los cuatro cuadrados negros estén visibles. La detección en vivo solo guía la captura; la lectura OMR definitiva se ejecuta después con el motor habitual.</div>
+    <div class="actions">
+      <span class="meta">Capturas agregadas al lote: <span id="cameraCaptureCount" class="camera-counter">0</span></span>
+      <button id="cameraCaptureAnyway" class="secondary">Capturar igualmente</button>
+      <button id="cameraCaptureReady" class="primary" disabled>Capturar hoja</button>
+      <button class="secondary" onclick="closeCameraMode()">Cerrar cámara</button>
+    </div>
+  </div>
+</div>
+
+<div id="studentAddModal" class="modal hidden">
+  <div class="backdrop" data-close="studentAddModal"></div>
+  <div class="modal-card" style="max-width:680px">
+    <div class="dialog-head"><h2>Agregar estudiante</h2><button class="xbtn" data-close="studentAddModal">×</button></div>
+    <form id="studentAddForm">
+      <div class="form-grid">
+        <label>RUN / RUT<input id="manualStudentRun" required placeholder="Ej. 23.366.610-6"></label>
+        <label>Nombres<input id="manualStudentFirst" required></label>
+        <label class="wide">Apellidos<input id="manualStudentLast" required></label>
+      </div>
+      <div id="manualStudentHistoryPreview"></div>
+      <div class="hint">Si el RUN ya existe en años anteriores, la app te preguntará si quieres vincular este registro al historial existente.</div>
+      <div class="actions">
+        <button type="button" class="secondary" data-close="studentAddModal">Cancelar</button>
+        <button type="submit" class="primary">Agregar al curso</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="previousStudentModal" class="modal hidden">
+  <div class="backdrop" data-close="previousStudentModal"></div>
+  <div class="modal-card" style="max-width:760px">
+    <div class="dialog-head"><h2>Importar estudiante anterior</h2><button class="xbtn" data-close="previousStudentModal">×</button></div>
+    <p class="meta">Selecciona una persona que ya tenga historial en otro curso o año. Al agregarla, conservará sus datos y resultados anteriores.</p>
+    <label>Buscar<input id="previousStudentSearch" placeholder="RUN, nombre o apellido"></label>
+    <div id="previousStudentList" class="previous-list" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<div id="studentHistoryModal" class="modal hidden">
+  <div class="backdrop" data-close="studentHistoryModal"></div>
+  <div class="modal-card">
+    <div class="dialog-head"><h2>Historial del estudiante</h2><button class="xbtn" data-close="studentHistoryModal">×</button></div>
+    <div id="studentHistoryContent"></div>
+  </div>
+</div>
+
+
+
+<div id="resultIdentityModal" class="modal hidden">
+  <div class="backdrop" data-close="resultIdentityModal"></div>
+  <div class="modal-card" style="max-width:760px">
+    <div class="dialog-head"><h2>Revisar identificación</h2><button class="xbtn" data-close="resultIdentityModal">×</button></div>
+    <div id="resultIdentityContent"></div>
+  </div>
+</div>
+
+<div id="evidenceModal" class="modal hidden">
+  <div class="backdrop" data-close="evidenceModal"></div>
+  <div class="modal-card" style="max-width:900px">
+    <div class="dialog-head"><h2>Hoja corregida</h2><button class="xbtn" data-close="evidenceModal">×</button></div>
+    <div id="evidenceModalContent"></div>
+  </div>
+</div>
+
+<div id="runtime" class="runtime">Cargando…</div>
+<script src="js/app.js"></script>
+<script>if('serviceWorker' in navigator&&location.protocol!=='file:')window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));</script></body>
+</html>
