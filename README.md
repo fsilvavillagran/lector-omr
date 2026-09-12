@@ -1,12 +1,6 @@
-# Lector OMR Docente v0.37
+# Lector OMR Docente v0.37.1
 
-Cambios de experiencia móvil:
-
-- Cámara OMR a pantalla completa.
-- Contador discreto de hojas capturadas en la parte superior.
-- Se elimina “Capturar igualmente”.
-- **Capturar** solo se habilita cuando hay 4/4 marcadores y geometría válida.
-- **Cerrar y analizar OMR** pide confirmación y analiza automáticamente las capturas de esa sesión.
-- **Cerrar cámara** advierte si existen capturas pendientes; al confirmar, solo esas capturas de la sesión se descartan.
-- Los botones Preparar/Analizar y Revisar/Guardar no aparecen hasta que exista trabajo correspondiente.
-- **Preparar archivos** solo aparece para archivos JPG/PNG/PDF cargados. Las capturas de cámara ya vienen preparadas.
+Corrección de regresión de la v0.37:
+- Se corrigió una etiqueta HTML mal formada en el modal “Agregar estudiante”.
+- Ese error hacía que el modal apareciera abierto permanentemente y bloqueara la navegación.
+- No cambia el flujo nuevo de cámara a pantalla completa de la v0.37.
