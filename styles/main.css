@@ -330,6 +330,14 @@
 }
 
 
+.omr-diagnostic{margin-top:8px;border-top:1px solid var(--line);padding-top:7px}
+.omr-diagnostic summary{cursor:pointer;font-size:10px;font-weight:700;color:var(--muted)}
+.omr-diagnostic img{display:block;width:100%;max-height:520px;object-fit:contain;margin-top:7px;border:1px solid var(--line);border-radius:8px;background:#fafafa}
+.crop-diagnostic{position:relative}
+.crop-diagnostic img{width:100%;height:auto;display:block;border-radius:7px;border:1px solid var(--line)}
+.crop-diagnostic .caption{font-size:9px;color:var(--muted);margin-top:4px}
+
+
 
 
     body{font-family:Arial,sans-serif;color:#1e2935;margin:0;background:#fff}

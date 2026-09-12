@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#17212b" />
-<title>Lector OMR Docente v0.37.2 PWA</title>
+<title>Lector OMR Docente v0.38 PWA</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -12,7 +12,7 @@
 <body>
 <div class="app">
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.37.2 · PWA</span></div></div>
+  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.38 · PWA</span></div></div>
   <nav class="nav">
     <button class="active" data-view="dashboard" data-short="Inicio">Inicio</button>
     <button data-view="courses" data-short="Cursos">Cursos</button>
@@ -148,7 +148,7 @@
       <div class="step"><strong>3. Detectar plantilla</strong><br>Busca los cuatro cuadrados negros exteriores de tu plantilla actual.</div>
       <div class="step"><strong>4. Leer RUN y respuestas</strong><br>Lee el RUN numérico y las burbujas A–D usando la geometría de tu hoja actual.</div>
       <div class="step"><strong>5. Revisar y guardar</strong><br>Las anomalías se corrigen dentro de este mismo lote. Solo al pulsar “Guardar cambios” los resultados se traspasan al curso.</div>
-      <div class="notice warning">La v0.37.1 usa cámara a pantalla completa, contador de hojas y un flujo directo: capturar → cerrar y analizar OMR → revisar/guardar. El lector sigue amarrado a tu plantilla actual. En Revisión ahora puedes ver el recorte que leyó el algoritmo, confirmar/cambiar el estudiante, ingresar un RUN manual o corregir una respuesta ambigua.</div>
+      <div class="notice warning">La v0.38 añade diagnóstico visual de la cuadrícula OMR, contador de hojas y un flujo directo: capturar → cerrar y analizar OMR → revisar/guardar. El lector sigue amarrado a tu plantilla actual. En Revisión ahora puedes ver el recorte que leyó el algoritmo, confirmar/cambiar el estudiante, ingresar un RUN manual o corregir una respuesta ambigua.</div>
     </aside>
   </div>
 </section>
@@ -202,7 +202,7 @@
       <p class="mini-note">Desde esta versión los datos persistentes también se guardan como una base JSON unificada. La interfaz sigue funcionando igual; este cambio prepara la migración futura a una base local de la app.</p>
     </article>
     <article class="panel" style="margin-top:16px">
-      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.37.1</span></div>
+      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.38</span></div>
       <div id="architectureSummary"></div>
       <div class="actions"><button id="runArchitectureCheck" class="secondary">Ejecutar autodiagnóstico</button></div>
       <p class="mini-note">La distribución sigue siendo un único archivo HTML para facilitar las pruebas. Internamente las funciones principales siguen agrupadas detrás de servicios definidos. La identidad longitudinal solo se vincula cuando el usuario lo confirma.</p>
@@ -301,15 +301,10 @@
 </div>
 
 <div id="runtime" class="runtime">Cargando…</div>
-<script src="js/app.js?v=0.37.2"></script>
+<script src="js/app.js?v=0.38"></script>
 <script>
-if('serviceWorker' in navigator && location.protocol!=='file:'){
-  window.addEventListener('load', async ()=>{
-    try{
-      const reg = await navigator.serviceWorker.register('./sw.js?v=0.37.2');
-      await reg.update();
-    }catch(err){ console.warn('SW',err); }
-  });
+if('serviceWorker' in navigator&&location.protocol!=='file:'){
+  window.addEventListener('load',async()=>{try{const r=await navigator.serviceWorker.register('./sw.js?v=0.38');await r.update()}catch(e){console.warn(e)}})
 }
 </script></body>
 </html>

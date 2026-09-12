@@ -1990,6 +1990,7 @@ function renderOMRCard(o){
     <div class="omr-line"><strong>En blanco</strong><span>${(o.answers||[]).filter(a=>a.status==='blank').length}</span></div>
     ${o.score?`<div class="omr-line"><strong>Puntaje</strong><span>${o.score.earned.toFixed(1)} / ${o.score.max.toFixed(1)}</span></div>`:''}
     <div class="omr-answers">${esc(ans)}</div>
+    ${o.diagnostic?`<details class="omr-diagnostic"><summary>Ver mapa de lectura OMR</summary><img src="${o.diagnostic}" alt="Mapa de lectura OMR"><div class="meta">Los círculos muestran exactamente dónde muestreó el lector cada alternativa. Las filas dudosas se resaltan de forma distinta.</div></details>`:''}
   </div>`;
 }
 
@@ -2073,7 +2074,7 @@ function renderReview(){
             const labels=a.metrics?.labels||['A','B','C','D'].slice(0,a.scores?.length||4);
             const scoreText=labels.map((l,i)=>`${l}: ${Math.round((a.scores?.[i]||0)*100)}%`).join(' · ');
             return `<div class="answer-review-row">
-              <div>${a.crop?`<img src="${a.crop}" alt="Zona alrededor de pregunta ${a.n}"><div class="review-context-note">Zona amplia alrededor del punto que analizó el lector. Úsala para verificar si existe desplazamiento de filas.</div>`:`<div class="empty">P${a.n}</div>`}</div>
+              <div class="crop-diagnostic">${a.crop?`<img src="${a.crop}" alt="Zona rectificada de pregunta ${a.n}"><div class="caption">Recorte rectificado. La línea y círculos indican la fila exacta que leyó el algoritmo.</div>`:`<div class="empty">P${a.n}</div>`}</div>
               <div>
                 <strong>Pregunta ${a.n}</strong>
                 <div class="read-metrics">
@@ -2243,7 +2244,7 @@ function renderDataIntegrity(){
 
 
 const AppArchitecture={
-  version:'0.37.2',
+  version:'0.38',
   modules:{
     data:{name:'Datos',description:'Persistencia, identidad longitudinal opcional e integridad.',get snapshot(){return databaseSnapshot},get persist(){return persist},get audit(){return dataIntegrityReport}},
     evidence:{name:'Evidencias',description:'Imágenes corregidas asociadas a resultados.',get put(){return evidencePut},get get(){return evidenceGet},get remove(){return evidenceDelete},get keys(){return evidenceKeys}},
@@ -2831,14 +2832,13 @@ async function analyzeOMRPage(page,ev){
     const pairs=activeOpts.map(letter=>({letter,pt:centers[all.indexOf(letter)]})).filter(x=>x.pt);
     const scores=pairs.map(x=>bubbleDarkness(im,H,x.pt.x,x.pt.y,7.5));
     const ar=classifyRow(n,scores,pairs.map(x=>x.letter));
+    ar.sampleCenters=pairs.map(x=>x.pt);
     if(ar.status==='ambiguous'){
       const pts=centers.filter(Boolean);
       if(pts.length){
         const minx=Math.min(...pts.map(p=>p.x))-95,maxx=Math.max(...pts.map(p=>p.x))+42;
-        // Contexto vertical amplio: si existe un pequeño desplazamiento geométrico
-        // se muestran también las filas vecinas y el número impreso de la pregunta.
-        const miny=Math.min(...pts.map(p=>p.y))-105,maxy=Math.max(...pts.map(p=>p.y))+105;
-        ar.crop=cropCanonicalRegion(c,ctx,H,minx,miny,maxx,maxy);
+        const miny=Math.min(...pts.map(p=>p.y))-80,maxy=Math.max(...pts.map(p=>p.y))+80;
+        ar.crop=rectifiedCanonicalCrop(im,H,minx,miny,maxx,maxy,pts[0].y,pts.map(p=>p.x));
       }
     }
     answers.push(ar);
@@ -2858,7 +2858,84 @@ async function analyzeOMRPage(page,ev){
     }
     score={earned,max};
   }
-  return {ok:true,markers,rawRun:runResult.raw,run:runResult.run,runCrop,runIssues:runResult.issues,studentMatch,answers,score,form,evaluationId:ev.id,courseId:ev.courseId};
+  const diagnostic=buildOMRDiagnosticImage(c,H,answers);
+  return {ok:true,markers,rawRun:runResult.raw,run:runResult.run,runCrop,runIssues:runResult.issues,studentMatch,answers,score,form,evaluationId:ev.id,courseId:ev.courseId,diagnostic};
+}
+
+
+function rectifiedCanonicalCrop(im,H,x0,y0,x1,y1,focusY=null,focusXs=[]){
+  const cw=Math.max(1,x1-x0),ch=Math.max(1,y1-y0);
+  const scale=Math.min(1.8,Math.max(1,520/Math.max(cw,ch)));
+  const out=document.createElement('canvas');
+  out.width=Math.max(1,Math.round(cw*scale));
+  out.height=Math.max(1,Math.round(ch*scale));
+  const ctx=out.getContext('2d');
+  const od=ctx.createImageData(out.width,out.height);
+  const src=im.data,w=im.width,h=im.height,dst=od.data;
+  for(let oy=0;oy<out.height;oy++){
+    const cy=y0+(oy+.5)/scale;
+    for(let ox=0;ox<out.width;ox++){
+      const cx=x0+(ox+.5)/scale;
+      const p=applyH(H,cx,cy);
+      const sx=Math.max(0,Math.min(w-1,Math.round(p.x)));
+      const sy=Math.max(0,Math.min(h-1,Math.round(p.y)));
+      const si=(sy*w+sx)*4,di=(oy*out.width+ox)*4;
+      dst[di]=src[si];dst[di+1]=src[si+1];dst[di+2]=src[si+2];dst[di+3]=255;
+    }
+  }
+  ctx.putImageData(od,0,0);
+
+  // Overlay only for diagnosis: where the algorithm actually sampled.
+  if(focusY!=null){
+    const fy=(focusY-y0)*scale;
+    ctx.save();
+    ctx.strokeStyle='rgba(196,61,48,.95)';
+    ctx.lineWidth=Math.max(1.5,1.5*scale);
+    ctx.beginPath();ctx.moveTo(0,fy);ctx.lineTo(out.width,fy);ctx.stroke();
+    for(const x of focusXs){
+      const fx=(x-x0)*scale;
+      ctx.beginPath();ctx.arc(fx,fy,8*scale,0,Math.PI*2);ctx.stroke();
+    }
+    ctx.fillStyle='rgba(196,61,48,.95)';
+    ctx.font=`bold ${Math.max(11,11*scale)}px Arial`;
+    ctx.fillText('fila analizada',6,Math.max(14,fy-6));
+    ctx.restore();
+  }
+  return out.toDataURL('image/jpeg',0.9);
+}
+
+function buildOMRDiagnosticImage(sourceCanvas,H,answers){
+  const scale=Math.min(1,1200/sourceCanvas.width);
+  const out=document.createElement('canvas');
+  out.width=Math.round(sourceCanvas.width*scale);
+  out.height=Math.round(sourceCanvas.height*scale);
+  const ctx=out.getContext('2d');
+  ctx.drawImage(sourceCanvas,0,0,out.width,out.height);
+  ctx.save();
+  ctx.lineWidth=Math.max(1.5,2*scale);
+  ctx.font=`bold ${Math.max(9,12*scale)}px Arial`;
+  ctx.textBaseline='middle';
+  for(const a of answers||[]){
+    const centers=a.sampleCenters||responseCenters(a.n);
+    const y=centers?.[0]?.y;
+    if(y==null)continue;
+    const left=centers.filter(Boolean)[0];
+    if(!left)continue;
+    const lp=applyH(H,left.x-42,y);
+    ctx.fillStyle='rgba(0,0,0,.68)';
+    ctx.fillRect(lp.x*scale-3,lp.y*scale-8,30,16);
+    ctx.fillStyle='#fff';
+    ctx.fillText(`P${a.n}`,lp.x*scale,lp.y*scale);
+    ctx.strokeStyle=a.status==='ambiguous'?'#c43d30':'#236c59';
+    for(const c of centers.filter(Boolean)){
+      const p=applyH(H,c.x,c.y);
+      const px=applyH(H,c.x+8,c.y);
+      const rr=Math.max(3,dist(p,px))*scale;
+      ctx.beginPath();ctx.arc(p.x*scale,p.y*scale,rr,0,Math.PI*2);ctx.stroke();
+    }
+  }
+  ctx.restore();
+  return out.toDataURL('image/jpeg',0.8);
 }
 
 function cropCanonicalRegion(sourceCanvas,sourceCtx,H,x0,y0,x1,y1){
@@ -3149,4 +3226,4 @@ $('#saveSchoolYear').onclick=()=>{
  const i=state.years.findIndex(y=>Number(y.year)===year);if(i>=0)state.years[i]=obj;else state.years.push(obj);
  logActivity('school_year_saved',`Calendario ${year}`,{year});persist();renderSettings();renderDashboard();renderCourses();renderCalendar();alert(`Calendario ${year} guardado.`);
 };$('#saveSettings').onclick=()=>{state.settings={threshold:Number($('#settingThreshold').value)||60,minGrade:Number($('#settingMinGrade').value)||1,passGrade:Number($('#settingPassGrade').value)||4,maxGrade:Number($('#settingMaxGrade').value)||7};persist();alert('Escala predeterminada guardada.')};
-persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.37.2 activa';setTimeout(()=>rt.remove(),2500);
+persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.38 activa';setTimeout(()=>rt.remove(),2500);
