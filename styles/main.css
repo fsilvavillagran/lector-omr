@@ -338,6 +338,22 @@
 .crop-diagnostic .caption{font-size:9px;color:var(--muted);margin-top:4px}
 
 
+.answer-audit{margin-top:8px}
+.answer-audit summary{cursor:pointer;font-size:10px;font-weight:700;color:var(--muted)}
+.answer-audit-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:7px;margin-top:8px}
+.answer-audit-row{border:1px solid var(--line);border-radius:8px;padding:7px;background:#fafafa}
+.answer-audit-row .choices{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.answer-audit-row button{min-width:30px}
+.flag.multiple{background:#fde8e6;color:#a33c34}
+
+
+.performance-chart{display:grid;gap:8px;margin-top:8px}
+.performance-bar{display:grid;grid-template-columns:110px 1fr 46px;gap:8px;align-items:center;font-size:10px}
+.performance-track{height:14px;background:#edf1f4;border-radius:999px;overflow:hidden}
+.performance-fill{height:100%;background:#607d9b;border-radius:999px}
+.performance-bar strong{text-align:right}
+
+
 
 
     body{font-family:Arial,sans-serif;color:#1e2935;margin:0;background:#fff}

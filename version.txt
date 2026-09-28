@@ -1,1 +1,1 @@
-Lector OMR Docente v0.38
+Lector OMR Docente v0.41

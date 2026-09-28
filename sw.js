@@ -1,5 +1,5 @@
-const CACHE='omr-docente-v0.38';
-const CORE=['./styles/main.css','./js/app.js?v=0.38','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
+const CACHE='omr-docente-v0.41';
+const CORE=['./styles/main.css','./js/app.js?v=0.41','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png'];
 self.addEventListener('install',e=>{e.waitUntil((async()=>{const c=await caches.open(CACHE);for(const u of CORE){try{await c.add(u)}catch(_){}}})());self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil((async()=>{for(const k of await caches.keys())if(k!==CACHE)await caches.delete(k);await self.clients.claim()})())});
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const r=e.request,u=new URL(r.url);if(r.mode==='navigate'||u.pathname.endsWith('/sw.js')){e.respondWith((async()=>{try{const f=await fetch(r,{cache:'no-store'});const c=await caches.open(CACHE);if(r.mode==='navigate')c.put('./index.html',f.clone()).catch(()=>{});return f}catch(_){return(await caches.match('./index.html'))||Response.error()}})());return}e.respondWith((async()=>{try{const f=await fetch(r);const c=await caches.open(CACHE);c.put(r,f.clone()).catch(()=>{});return f}catch(_){return(await caches.match(r))||Response.error()}})())});

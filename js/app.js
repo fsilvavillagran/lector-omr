@@ -2,7 +2,21 @@
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const defaults={threshold:60,minGrade:1,passGrade:4,maxGrade:7};
 const parse=(x,f)=>{try{return JSON.parse(x)}catch{return f}};
-const store={get(k,f){try{return localStorage.getItem(k)??f}catch{return f}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
+let storageFailureShown=false;
+const store={
+  get(k,f){try{return localStorage.getItem(k)??f}catch{return f}},
+  set(k,v){
+    try{localStorage.setItem(k,v);return true}
+    catch(err){
+      console.error('Error de almacenamiento local:',err);
+      if(!storageFailureShown){
+        storageFailureShown=true;
+        setTimeout(()=>alert('No fue posible guardar todos los datos locales. La aplicación evitó continuar silenciosamente. Exporta un respaldo y vuelve a intentarlo.'),0);
+      }
+      return false;
+    }
+  }
+};
 const APP_SCHEMA_VERSION=2;
 const DB_KEY='omr_app_db_v1';
 function legacyDatabase(){
@@ -110,6 +124,68 @@ function dataURLToBlob(dataURL){
   for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
   return new Blob([arr],{type:mime});
 }
+
+const SCAN_DRAFT_DB='omr_scan_drafts_v1';
+const SCAN_DRAFT_STORE='drafts';
+let scanDraftRestored=false;
+function openScanDraftDB(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(SCAN_DRAFT_DB,1);
+    req.onupgradeneeded=()=>{const d=req.result;if(!d.objectStoreNames.contains(SCAN_DRAFT_STORE))d.createObjectStore(SCAN_DRAFT_STORE)};
+    req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+  });
+}
+async function persistScanDraft(){
+  if(!scanDraftRestored)return;
+  try{
+    const d=await openScanDraftDB();
+    const payload={
+      pages:state.scanPages||[],
+      evaluationId:$('#scanEvaluationSelect')?.value||'',
+      form:$('#scanFormSelect')?.value||'',
+      savedAt:new Date().toISOString()
+    };
+    await new Promise((resolve,reject)=>{
+      const tx=d.transaction(SCAN_DRAFT_STORE,'readwrite');
+      tx.objectStore(SCAN_DRAFT_STORE).put(payload,'current');
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    d.close();
+  }catch(err){console.warn('No se pudo guardar el lote temporal:',err)}
+}
+async function clearScanDraft(){
+  try{
+    const d=await openScanDraftDB();
+    await new Promise((resolve,reject)=>{
+      const tx=d.transaction(SCAN_DRAFT_STORE,'readwrite');
+      tx.objectStore(SCAN_DRAFT_STORE).delete('current');
+      tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);
+    });
+    d.close();
+  }catch(err){console.warn(err)}
+}
+async function restoreScanDraft(){
+  try{
+    const d=await openScanDraftDB();
+    const payload=await new Promise((resolve,reject)=>{
+      const tx=d.transaction(SCAN_DRAFT_STORE,'readonly');
+      const req=tx.objectStore(SCAN_DRAFT_STORE).get('current');
+      req.onsuccess=()=>resolve(req.result||null);req.onerror=()=>reject(req.error);
+    });
+    d.close();
+    if(payload?.pages?.length){
+      state.scanPages=payload.pages;
+      renderScan();
+      if(payload.evaluationId&&$('#scanEvaluationSelect')){
+        $('#scanEvaluationSelect').value=payload.evaluationId;
+        renderScanForms();
+        if(payload.form&&$('#scanFormSelect'))$('#scanFormSelect').value=payload.form;
+      }
+    }
+  }catch(err){console.warn('No se pudo restaurar el lote temporal:',err)}
+  scanDraftRestored=true;
+}
+
 function setBackupProgress(text,show=true){
   const el=$('#backupProgress');if(!el)return;
   el.classList.toggle('hidden',!show);
@@ -133,15 +209,21 @@ function databaseSnapshot(){
   };
 }
 function persist(){
+  // Los resultados nunca deben guardar imágenes diagnósticas dentro de localStorage.
+  // Eso agotaba la cuota del navegador después de unas pocas hojas.
+  (state.results||[]).forEach(r=>{if(r.omr)r.omr=compactOMRForStorage(r.omr)});
   const snap=databaseSnapshot();
   state.schemaVersion=snap.schemaVersion;state.meta=snap.meta;
-  store.set(DB_KEY,JSON.stringify(snap));
-  // Espejo temporal para mantener compatibilidad con respaldos/prototipos anteriores.
-  store.set('omr4_settings',JSON.stringify(state.settings));store.set('omr4_years',JSON.stringify(state.years));
-  store.set('omr4_courses',JSON.stringify(state.courses));store.set('omr4_students',JSON.stringify(state.students));
-  store.set('omr4_evaluations',JSON.stringify(state.evaluations));store.set('omr4_review',JSON.stringify(state.review));
-  store.set('omr4_results',JSON.stringify(state.results));store.set('omr4_activity',JSON.stringify(state.activity));store.set('omr4_persons',JSON.stringify(state.persons));store.set('omr4_enrollments',JSON.stringify(state.enrollments));
-  const ss=$('#saveState');if(ss)ss.innerHTML='<span class="ok-dot"></span>Guardado local';
+  const ok=store.set(DB_KEY,JSON.stringify(snap));
+  if(ok){
+    // Desde v0.41 dejamos de duplicar toda la base en claves legacy.
+    // Se conservan solo como mecanismo de lectura de versiones antiguas.
+    ['omr4_settings','omr4_years','omr4_courses','omr4_students','omr4_evaluations','omr4_review','omr4_results','omr4_activity','omr4_persons','omr4_enrollments']
+      .forEach(k=>{try{localStorage.removeItem(k)}catch(_){}});
+  }
+  const ss=$('#saveState');
+  if(ss)ss.innerHTML=ok?'<span class="ok-dot"></span>Guardado local':'<span class="warn-dot"></span>Error al guardar';
+  return ok;
 }
 
 function logActivity(type,detail='',meta={}){
@@ -298,7 +380,8 @@ function compactOMRForStorage(o){
   const copy=JSON.parse(JSON.stringify(o));
   delete copy.runCrop;
   delete copy.markers;
-  (copy.answers||[]).forEach(a=>{delete a.crop;delete a.scores});
+  delete copy.diagnostic;
+  (copy.answers||[]).forEach(a=>{delete a.crop;delete a.scores;delete a.sampleCenters});
   return copy;
 }
 
@@ -437,6 +520,7 @@ function renderResults(){
   $('#resultScopeCourse')?.classList.toggle('secondary',resultsScope!=='course');
   $('#printStudentReports')?.classList.toggle('hidden',resultsScope!=='student');
   $('#printCourseReport')?.classList.toggle('hidden',resultsScope!=='course');
+  $('#printAllStudentReports')?.classList.toggle('hidden',resultsScope!=='course');
 
   if(!ev){
     summary.innerHTML='';
@@ -779,7 +863,18 @@ function renderCourseAnalysisPreview(ev,rows){
     ...x.lowSkills.map(v=>({label:`Habilidad: ${v.tag}`,pct:v.pct})),
     ...x.lowContents.map(v=>({label:`Contenido: ${v.tag}`,pct:v.pct}))
   ].sort((a,b)=>a.pct-b.pct).slice(0,5);
+  const bands=[
+    {label:'0–39%',count:rows.filter(r=>r.percent<40).length},
+    {label:'40–59%',count:rows.filter(r=>r.percent>=40&&r.percent<60).length},
+    {label:'60–79%',count:rows.filter(r=>r.percent>=60&&r.percent<80).length},
+    {label:'80–100%',count:rows.filter(r=>r.percent>=80).length}
+  ];
+  const maxBand=Math.max(1,...bands.map(b=>b.count));
   box.innerHTML=`<div class="course-analysis">
+    <div class="panel-lite">
+      <h3>Distribución de rendimiento</h3>
+      <div class="performance-chart">${bands.map(b=>`<div class="performance-bar"><span>${b.label}</span><div class="performance-track"><div class="performance-fill" style="width:${b.count/maxBand*100}%"></div></div><strong>${b.count}</strong></div>`).join('')}</div>
+    </div>
     <div class="panel-lite">
       <h3>Aspectos a reforzar</h3>
       <div class="alert-list">${weakest.length?weakest.map(v=>`<div class="alert-item bad"><span>${esc(v.label)}</span><strong>${v.pct.toFixed(1)}%</strong></div>`).join(''):'<div class="meta">No hay habilidades o contenidos etiquetados.</div>'}</div>
@@ -1683,8 +1778,8 @@ function lockScoring(id){scoringUnlocked.delete(id);renderScoringLock();renderQu
 
 function formChoiceCount(e=currentEv(),f=currentForm()){
   const items=e?.formConfigs?.[f]?.items||[];
-  if(!items.length)return Math.min(4,Math.max(2,Number(e?.choices)||4));
-  return Math.min(4,Math.max(2,Math.max(...items.map(q=>(q.options||[]).length||0))));
+  if(!items.length)return Math.min(5,Math.max(2,Number(e?.choices)||4));
+  return Math.min(5,Math.max(2,Math.max(...items.map(q=>(q.options||[]).length||0))));
 }
 function renderQuestionRows(){
   const e=currentEv();if(!e)return;
@@ -1696,13 +1791,13 @@ function renderQuestionRows(){
   if($('#formChoiceCount'))$('#formChoiceCount').value=String(formChoiceCount(e,currentForm()));
   if(!items.length){body.innerHTML='<tr><td colspan="6"><div class="empty">No se pudieron generar las preguntas de esta forma.</div></td></tr>';return}
   items.forEach((q,i)=>{
-    if(!Array.isArray(q.options)||q.options.length<2)q.options=defaultOptionsFor(e).slice(0,4);
-    q.options=q.options.filter(x=>['A','B','C','D'].includes(x));
+    if(!Array.isArray(q.options)||q.options.length<2)q.options=defaultOptionsFor(e).slice(0,5);
+    q.options=q.options.filter(x=>['A','B','C','D','E'].includes(x));
     if(!q.options.includes(q.key))q.key=q.options[0];
     const tr=document.createElement('tr');
     tr.classList.toggle('void',!q.active);
     const baseCount=formChoiceCount(e,currentForm());
-    const allLetters=['A','B','C','D'].slice(0,baseCount);
+    const allLetters=['A','B','C','D','E'].slice(0,baseCount);
     const optionsHtml=allLetters.map(l=>{
       const active=q.options.includes(l), correct=q.key===l;
       if(!active){
@@ -1758,8 +1853,8 @@ function restoreQuestionOption(index,letter){
 }
 function setCurrentFormChoiceCount(){
   const e=currentEv(),f=currentForm();if(!e||!f||scoringLocked(e))return;
-  const n=Math.max(2,Math.min(4,Number($('#formChoiceCount').value)||4));
-  const letters=['A','B','C','D'].slice(0,n);
+  const n=Math.max(2,Math.min(5,Number($('#formChoiceCount').value)||4));
+  const letters=['A','B','C','D','E'].slice(0,n);
   const cfg=e.formConfigs[f],invalid=cfg.items.filter(q=>!letters.includes(q.key)).length;
   if(invalid && !confirm(`${invalid} pregunta(s) tienen actualmente una clave fuera de ${letters.join('–')}. Al reducir las alternativas, esas claves se cambiarán temporalmente a ${letters[0]}. Luego puedes marcar la alternativa correcta directamente con los botones. ¿Continuar?`))return;
   cfg.items.forEach(q=>{
@@ -1950,7 +2045,7 @@ function renderScan(){
     <div class="thumb" id="thumb-${i}">${p.thumb?`<img src="${p.thumb}" alt="">`:'<span class="muted">Vista previa</span>'}</div>
     <div class="body"><strong>${esc(p.label)}</strong><div class="meta">${p.width&&p.height?`${p.width} × ${p.height}px`:'Página preparada'}</div>
     <div class="flags"><span class="flag ok">Lista</span><span class="flag">${esc(p.form||'Forma sin confirmar')}</span>${p.omr?`<span class="flag ${p.omr.ok?'read':'fail'}">${p.omr.ok?'OMR leído':'OMR con problema'}</span>`:''}${p.finalized?'<span class="flag saved-badge">Guardado</span>':(p.draftAnalyzed?'<span class="flag draft-badge">Borrador</span>':'')}${state.review.filter(r=>r.file===p.label).length?`<span class="flag warn">⚠ Revisar (${state.review.filter(r=>r.file===p.label).length})</span>`:(p.omr?.ok&&!p.omr?.studentMatch?.exact?'<span class="flag warn">⚠ Identificación pendiente</span>':'')}</div>
-    ${p.omr?renderOMRCard(p.omr):''}
+    ${p.omr?renderOMRCard(p.omr,p.label):''}
     </div>
   </div>`).join(''):'';
   const labels=new Set(pages.map(p=>p.label));
@@ -1979,19 +2074,58 @@ function renderScan(){
   renderReview();
 }
 
-function renderOMRCard(o){
+function renderOMRCard(o,pageLabel=''){
   if(!o)return '';
   if(!o.ok)return `<div class="omr-result"><div class="omr-line"><strong>Problema</strong><span>${esc(o.error||'No se pudo leer')}</span></div></div>`;
-  const ans=(o.answers||[]).map((a,i)=>`${i+1}:${a.answer||'—'}${a.status==='ambiguous'?'?':''}`).join('  ');
+  const ans=(o.answers||[]).map((a,i)=>`${i+1}:${a.answer||'—'}${a.status==='ambiguous'?'?':a.status==='multiple'?'×2':''}`).join('  ');
   return `<div class="omr-result">
     <div class="omr-line"><strong>RUN leído</strong><span>${esc(o.run||'No concluyente')}</span></div>
     ${o.studentMatch?`<div class="omr-line"><strong>Estudiante</strong><span>${esc(o.studentMatch.name)}${o.studentMatch.exact?' ✓':' · revisar'}</span></div>`:''}
     <div class="omr-line"><strong>Respondidas</strong><span>${(o.answers||[]).filter(a=>a.answer).length}/${o.answers?.length||0}</span></div>
+    ${(o.answers||[]).some(a=>a.metrics?.labels?.includes('E'))?'<div class="omr-line"><strong>Alternativas</strong><span>A–E activas</span></div>':''}
     <div class="omr-line"><strong>En blanco</strong><span>${(o.answers||[]).filter(a=>a.status==='blank').length}</span></div>
     ${o.score?`<div class="omr-line"><strong>Puntaje</strong><span>${o.score.earned.toFixed(1)} / ${o.score.max.toFixed(1)}</span></div>`:''}
     <div class="omr-answers">${esc(ans)}</div>
     ${o.diagnostic?`<details class="omr-diagnostic"><summary>Ver mapa de lectura OMR</summary><img src="${o.diagnostic}" alt="Mapa de lectura OMR"><div class="meta">Los círculos muestran exactamente dónde muestreó el lector cada alternativa. Las filas dudosas se resaltan de forma distinta.</div></details>`:''}
+    <details class="answer-audit"><summary>Revisar / corregir todas las respuestas</summary>
+      <div class="answer-audit-grid">
+        ${(o.answers||[]).map(a=>{
+          const labels=a.metrics?.labels||['A','B','C','D','E'].slice(0,a.scores?.length||4);
+          return `<div class="answer-audit-row">
+            <strong>P${a.n}</strong> · <span class="meta">${a.status==='multiple'?'múltiple':a.status==='ambiguous'?'ambigua':a.status==='uncertain_blank'?'blanco dudoso':a.status==='blank'?'blanco':'ok'}</span>
+            <div class="meta">Lectura actual: <strong>${esc(a.answer||'Blanco')}</strong>${a.marked?.length>1?` · detectadas: ${esc(a.marked.join(' + '))}`:''}</div>
+            <div class="choices">
+              ${labels.map(l=>`<button class="${a.answer===l?'primary':'secondary'} small" onclick="manualCorrectAnswer('${pageLabel.replace(/'/g,"&#39;")}',${a.n},'${l}')">${l}</button>`).join('')}
+              <button class="${!a.answer?'primary':'secondary'} small" onclick="manualCorrectAnswer('${pageLabel.replace(/'/g,"&#39;")}',${a.n},'')">Blanco</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="meta" style="margin-top:6px">La corrección manual reemplaza la lectura del algoritmo antes de guardar el lote.</div>
+    </details>
   </div>`;
+}
+
+
+function manualCorrectAnswer(pageLabel,n,value){
+  const page=(state.scanPages||[]).find(p=>p.label===pageLabel&&!p.finalized);
+  if(!page?.omr)return;
+  const a=page.omr.answers?.find(x=>x.n===n);if(!a)return;
+  a.answer=value;
+  a.status='ok';
+  a.reviewed=true;
+  a.manual=true;
+  a.marked=value?[value]:[];
+  recomputePageScore(page);
+
+  const rr=state.review.find(r=>r.file===page.label&&r.type==='Revisar respuestas');
+  if(rr){
+    const remaining=page.omr.answers.filter(x=>x.status==='ambiguous'||x.status==='multiple'||x.status==='uncertain_blank');
+    if(!remaining.length)state.review=state.review.filter(r=>r.id!==rr.id);
+    else rr.detail=remaining.map(x=>`P${x.n}: ${x.status==='multiple'?'marcas múltiples':x.status==='uncertain_blank'?'blanco dudoso':'marca ambigua'}`).join(' · ');
+  }
+  logActivity('answer_reviewed',`${page.label} · P${n} → ${value||'Blanco'}`,{evaluationId:page.omr.evaluationId,resultKey:resultKeyForPage(page,page.omr)});
+  persist();persistScanDraft();renderScan();renderReview();renderStats();
 }
 
 function renderScanForms(){
@@ -2006,6 +2140,14 @@ function renderScanForms(){
   if(forms.includes(old))sel.value=old;
 }
 
+
+function discardProblemPage(label){
+  if(!confirm('Esta hoja será retirada del lote para que puedas escanearla nuevamente. ¿Continuar?'))return;
+  state.scanPages=state.scanPages.filter(p=>p.label!==label);
+  state.review=state.review.filter(r=>r.file!==label);
+  persistScanDraft();persist();renderScan();renderReview();renderStats();
+}
+
 function renderReview(){
   const box=$('#reviewList');if(!box)return;
   const labels=new Set((state.scanPages||[]).map(p=>p.label));
@@ -2013,6 +2155,18 @@ function renderReview(){
   if(!current.length){box.innerHTML='<div class="empty">No hay anomalías pendientes en este lote.</div>';return}
   box.innerHTML=current.map(r=>{
     const page=(state.scanPages||[]).find(p=>p.label===r.file);
+
+    if((r.type==='Reescanear hoja'||r.type==='Error OMR') && page){
+      return `<div class="review-card">
+        <strong>${esc(r.type)}</strong>
+        <div class="meta">${esc(r.file||'')}</div>
+        <p class="meta">${esc(r.detail||'No se pudo leer correctamente esta hoja.')}</p>
+        <div class="actions">
+          <button class="danger small" onclick="discardProblemPage('${r.file.replace(/'/g,"&#39;")}')">Descartar hoja del lote</button>
+        </div>
+        <div class="review-note">Al descartarla desaparece inmediatamente del lote y puedes volver a escanearla. No es necesario guardar primero las demás hojas.</div>
+      </div>`;
+    }
 
     if(r.type==='Revisar RUN' && page?.omr){
       const courseId=page.omr.courseId;
@@ -2060,7 +2214,7 @@ function renderReview(){
     }
 
     if(r.type==='Revisar respuestas' && page?.omr){
-      const qs=(page.omr.answers||[]).filter(a=>a.status==='ambiguous');
+      const qs=(page.omr.answers||[]).filter(a=>a.status==='ambiguous'||a.status==='multiple'||a.status==='uncertain_blank');
       const pending=pendingAnswerReviews[r.id]||{};
       return `<div class="review-card">
         <strong>Revisar respuestas</strong>
@@ -2071,7 +2225,7 @@ function renderReview(){
             const ev=state.evaluations.find(e=>e.id===page.omr.evaluationId);
             const form=page.omr.form||ev?.forms?.[0];
             const q=ev?.formConfigs?.[form]?.items?.[a.n-1];
-            const labels=a.metrics?.labels||['A','B','C','D'].slice(0,a.scores?.length||4);
+            const labels=a.metrics?.labels||['A','B','C','D','E'].slice(0,a.scores?.length||4);
             const scoreText=labels.map((l,i)=>`${l}: ${Math.round((a.scores?.[i]||0)*100)}%`).join(' · ');
             return `<div class="answer-review-row">
               <div class="crop-diagnostic">${a.crop?`<img src="${a.crop}" alt="Zona rectificada de pregunta ${a.n}"><div class="caption">Recorte rectificado. La línea y círculos indican la fila exacta que leyó el algoritmo.</div>`:`<div class="empty">P${a.n}</div>`}</div>
@@ -2081,14 +2235,14 @@ function renderReview(){
                   <div class="read-metric"><span>Lectura</span><strong>${esc(a.answer||'Blanco')}</strong></div>
                   <div class="read-metric"><span>Clave correcta</span><strong>${esc(q?.key||'—')}</strong></div>
                   <div class="read-metric"><span>Puntaje</span><strong>${q?.points??'—'}</strong></div>
-                  <div class="read-metric"><span>Estado</span><strong>Marca ambigua</strong></div>
+                  <div class="read-metric"><span>Estado</span><strong>${a.status==='multiple'?'Marcas múltiples':a.status==='uncertain_blank'?'Blanco dudoso':'Marca ambigua'}</strong></div>
                 </div>
                 ${q?.skill||q?.content?`<div class="meta">${q?.skill?`Habilidad: ${esc(q.skill)}`:''}${q?.skill&&q?.content?' · ':''}${q?.content?`Contenido: ${esc(q.content)}`:''}</div>`:''}
-                <div class="meta">Intensidad: ${esc(scoreText)}</div>
+                <div class="meta">Intensidad: ${esc(scoreText)}</div>${a.marked?.length>1?`<div class="meta"><strong>Marcas detectadas:</strong> ${esc(a.marked.join(" + "))}</div>`:""}
                 <div class="meta">Selección para guardar: <strong>${esc(selected||'Blanco')}</strong></div>
               </div>
               <div class="choice-buttons">
-                ${['A','B','C','D'].map(l=>`<button class="${selected===l?'primary pending':'secondary'} small" onclick="selectPendingAnswer('${r.id}',${a.n},'${l}')">${l}</button>`).join('')}
+                ${labels.map(l=>`<button class="${selected===l?'primary pending':'secondary'} small" onclick="selectPendingAnswer('${r.id}',${a.n},'${l}')">${l}</button>`).join('')}
                 <button class="${selected===''?'primary pending':'secondary'} small" onclick="selectPendingAnswer('${r.id}',${a.n},'')">Blanco</button>
               </div>
             </div>`;
@@ -2140,7 +2294,7 @@ function confirmRunReview(id){
 
   state.review=state.review.filter(x=>x.id!==id);
   updateStoredResultFromPage(page);
-  persist();renderReview();renderScan();renderStats();if($('#results')?.classList.contains('active'))renderResults();
+  persist();persistScanDraft();renderReview();renderScan();renderStats();if($('#results')?.classList.contains('active'))renderResults();
 }
 function selectPendingAnswer(reviewId,n,answer){
   pendingAnswerReviews[reviewId]=pendingAnswerReviews[reviewId]||{};
@@ -2155,9 +2309,16 @@ function savePendingAnswers(reviewId){
   const r=state.review.find(x=>x.id===reviewId); if(!r)return;
   const page=(state.scanPages||[]).find(p=>p.label===r.file); if(!page?.omr)return;
   const pending=pendingAnswerReviews[reviewId]||{};
-  const ambiguous=page.omr.answers.filter(x=>x.status==='ambiguous');
+  const ambiguous=page.omr.answers.filter(x=>x.status==='ambiguous'||x.status==='multiple'||x.status==='uncertain_blank');
   if(!ambiguous.length)return;
-  if(!Object.keys(pending).length)return alert('No has seleccionado ningún cambio.');
+  // Si el lector propuso una respuesta ambigua y el docente está de acuerdo,
+  // basta con guardar: no es necesario cambiar a otra alternativa y volver.
+  ambiguous.forEach(a=>{
+    if(!Object.prototype.hasOwnProperty.call(pending,a.n) && a.status!=='multiple'){
+      pending[a.n]=a.answer||'';
+    }
+  });
+  if(!Object.keys(pending).length)return alert('Selecciona una alternativa para las preguntas con marcas múltiples.');
   const missing=ambiguous.filter(a=>!Object.prototype.hasOwnProperty.call(pending,a.n));
   if(missing.length && !confirm(`Hay ${missing.length} pregunta(s) ambigua(s) sin modificar. ¿Deseas guardar solo los cambios seleccionados y mantener las demás pendientes?`))return;
   if(!confirm('¿Estás seguro de guardar estas correcciones?'))return;
@@ -2170,9 +2331,9 @@ function savePendingAnswers(reviewId){
     }
   });
   recomputePageScore(page);
-  const remaining=page.omr.answers.filter(x=>x.status==='ambiguous');
+  const remaining=page.omr.answers.filter(x=>x.status==='ambiguous'||x.status==='multiple'||x.status==='uncertain_blank');
   if(!remaining.length)state.review=state.review.filter(x=>x.id!==reviewId);
-  else r.detail=remaining.map(x=>`P${x.n}: marca ambigua`).join(' · ');
+  else r.detail=remaining.map(x=>`P${x.n}: ${x.status==='multiple'?'marcas múltiples':x.status==='uncertain_blank'?'blanco dudoso':'marca ambigua'}`).join(' · ');
   delete pendingAnswerReviews[reviewId];
   logActivity('answer_reviewed',`${page.label} · ${Object.keys(pending).length} respuesta(s) corregida(s)`,{evaluationId:page.omr?.evaluationId||null,resultKey:resultKeyForPage(page,page.omr)});
   updateStoredResultFromPage(page);
@@ -2244,7 +2405,7 @@ function renderDataIntegrity(){
 
 
 const AppArchitecture={
-  version:'0.38',
+  version:'0.41',
   modules:{
     data:{name:'Datos',description:'Persistencia, identidad longitudinal opcional e integridad.',get snapshot(){return databaseSnapshot},get persist(){return persist},get audit(){return dataIntegrityReport}},
     evidence:{name:'Evidencias',description:'Imágenes corregidas asociadas a resultados.',get put(){return evidencePut},get get(){return evidenceGet},get remove(){return evidenceDelete},get keys(){return evidenceKeys}},
@@ -2414,7 +2575,7 @@ async function finalizeScanBatch(){
     if(!ok){openBatchReview();return}
   }
   if(!clean.length&&unresolved.length){
-    if(!confirm('Todas las hojas tienen datos pendientes. Si continúas, no se guardará ningún resultado de este lote. ¿Continuar?'))return;
+    if(!confirm('Todas las hojas tienen datos pendientes. No se guardará ningún resultado todavía y las hojas permanecerán en el lote. ¿Continuar?'))return;
   }
 
   const btn=$('#saveScanChanges');if(btn){btn.disabled=true;btn.textContent='Guardando…'}
@@ -2425,17 +2586,16 @@ async function finalizeScanBatch(){
       p.finalized=true;
       saved++;
     }
+    // Las hojas pendientes se conservan en el lote. Nunca se eliminan automáticamente.
+    // El docente puede revisarlas o descartarlas explícitamente si debe reescanearlas.
     if(unresolved.length){
-      const omitLabels=new Set(unresolved.map(p=>p.label));
-      state.review=state.review.filter(r=>!omitLabels.has(r.file));
-      unresolved.forEach(p=>{p.omitted=true;p.draftAnalyzed=false});
-      state.scanPages=state.scanPages.filter(p=>!omitLabels.has(p.label));
+      unresolved.forEach(p=>{p.omitted=false;p.draftAnalyzed=true});
     }
     const eid=$('#scanEvaluationSelect')?.value;
     const ev=state.evaluations.find(e=>e.id===eid);
     if(ev&&saved)ev.status='escaneada';
-    persist();renderReview();renderScan();renderStats();renderDashboard();renderCourses();
-    alert(`${saved} hoja(s) traspasada(s) al curso${unresolved.length?` · ${unresolved.length} hoja(s) con datos sin revisar fueron omitidas`:''}.`);
+    persist();persistScanDraft();renderReview();renderScan();renderStats();renderDashboard();renderCourses();
+    alert(`${saved} hoja(s) traspasada(s) al curso${unresolved.length?` · ${unresolved.length} hoja(s) siguen pendientes en el lote`:''}.`);
   }finally{
     if(btn){btn.textContent='Guardar cambios';btn.disabled=false}
     renderScan();
@@ -2450,8 +2610,16 @@ function updateScanProgress(done,total,text){
 }
 async function prepareImageItem(item){
   const url=URL.createObjectURL(item.file);
-  const dims=await getImageDimensions(url);
-  state.scanPages.push({kind:'image',sourceName:item.name,label:item.name,thumb:url,width:dims.width,height:dims.height,form:$('#scanFormSelect').value||''});
+  const img=await loadImageFromUrl(url);
+  const maxW=1800,scale=Math.min(1,maxW/(img.naturalWidth||img.width));
+  const c=document.createElement('canvas');
+  c.width=Math.round((img.naturalWidth||img.width)*scale);
+  c.height=Math.round((img.naturalHeight||img.height)*scale);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+  URL.revokeObjectURL(url);
+  const thumb=c.toDataURL('image/jpeg',0.88);
+  state.scanPages.push({kind:'image',sourceName:item.name,label:item.name,thumb,width:c.width,height:c.height,form:$('#scanFormSelect').value||''});
+  await persistScanDraft();
 }
 function getImageDimensions(url){return new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve({width:im.naturalWidth,height:im.naturalHeight});im.onerror=reject;im.src=url})}
 async function loadPdfJs(){
@@ -2474,6 +2642,7 @@ async function preparePdfItem(item){
     await page.render({canvasContext:c.getContext('2d'),viewport}).promise;
     const thumb=c.toDataURL('image/jpeg',0.78);
     state.scanPages.push({kind:'pdf',sourceName:item.name,label:`${item.name} · pág. ${p}`,thumb,width:c.width,height:c.height,page:p,form:$('#scanFormSelect').value||''});
+    await persistScanDraft();
   }
 }
 
@@ -2655,8 +2824,8 @@ const OMR_TEMPLATE={
     {x:188.5,y:149.5},{x:1030.5,y:146.0},
     {x:193.5,y:1466.5},{x:1034.0,y:1465.0}
   ],
-  leftX:[407,438,470,500],
-  rightX:[733,765,796,827],
+  leftX:[407,438,470,500,531],
+  rightX:[733,765,796,827,858],
   topRows:Array.from({length:10},(_,i)=>612+i*32),
   bottomRows:Array.from({length:15},(_,i)=>944+i*32),
   runX:[702,737,771,805,839,873,907,941,975],
@@ -2693,9 +2862,9 @@ async function analyzeOMRPages(pages){
           ].filter(Boolean).join(' · ');
           state.review.push({id:uid(),source:'omr',type:'Revisar RUN',file:p.label,detail:detail||'RUN no concluyente'});
         }
-        const bad=p.omr.answers.filter(a=>a.status==='ambiguous');
+        const bad=p.omr.answers.filter(a=>a.status==='ambiguous'||a.status==='multiple'||a.status==='uncertain_blank');
         if(bad.length){
-          state.review.push({id:uid(),source:'omr',type:'Revisar respuestas',file:p.label,detail:bad.map(a=>`P${a.n}: marca ambigua`).join(' · ')});
+          state.review.push({id:uid(),source:'omr',type:'Revisar respuestas',file:p.label,detail:bad.map(a=>`P${a.n}: ${a.status==='multiple'?'marcas múltiples':a.status==='uncertain_blank'?'blanco dudoso':'marca ambigua'}`).join(' · ')});
         }
       }
     }catch(err){
@@ -2707,7 +2876,7 @@ async function analyzeOMRPages(pages){
     updateScanProgress(i+1,total,`${i+1} de ${total} páginas analizadas`);
     await new Promise(r=>setTimeout(r,15));
   }
-  persist();renderReview();renderStats();renderScan();
+  persist();persistScanDraft();renderReview();renderStats();renderScan();
   if(btn){btn.disabled=false;btn.textContent='Analizar OMR'}
   setTimeout(()=>$('#scanProgressWrap').classList.add('hidden'),1000);
 }
@@ -2718,7 +2887,7 @@ $('#analyzeOMR').onclick=async()=>{
 
 
 function answerCanonicalPoint(n,letter){
-  const centers=responseCenters(n),idx=['A','B','C','D'].indexOf(letter);
+  const centers=responseCenters(n),idx=['A','B','C','D','E'].indexOf(letter);
   if(idx<0||!centers[idx])return null;
   return centers[idx];
 }
@@ -2827,13 +2996,13 @@ async function analyzeOMRPage(page,ev){
   for(let n=1;n<=qCount;n++){
     const centers=responseCenters(n);
     const q=cfg?.items?.[n-1];
-    const activeOpts=(q?.options?.length?q.options:defaultOptionsFor(ev)).filter(x=>['A','B','C','D'].includes(x));
-    const all=['A','B','C','D'];
+    const activeOpts=(q?.options?.length?q.options:defaultOptionsFor(ev)).filter(x=>['A','B','C','D','E'].includes(x));
+    const all=['A','B','C','D','E'];
     const pairs=activeOpts.map(letter=>({letter,pt:centers[all.indexOf(letter)]})).filter(x=>x.pt);
     const scores=pairs.map(x=>bubbleDarkness(im,H,x.pt.x,x.pt.y,7.5));
     const ar=classifyRow(n,scores,pairs.map(x=>x.letter));
     ar.sampleCenters=pairs.map(x=>x.pt);
-    if(ar.status==='ambiguous'){
+    if(ar.status==='ambiguous'||ar.status==='multiple'){
       const pts=centers.filter(Boolean);
       if(pts.length){
         const minx=Math.min(...pts.map(p=>p.x))-95,maxx=Math.max(...pts.map(p=>p.x))+42;
@@ -2926,7 +3095,7 @@ function buildOMRDiagnosticImage(sourceCanvas,H,answers){
     ctx.fillRect(lp.x*scale-3,lp.y*scale-8,30,16);
     ctx.fillStyle='#fff';
     ctx.fillText(`P${a.n}`,lp.x*scale,lp.y*scale);
-    ctx.strokeStyle=a.status==='ambiguous'?'#c43d30':'#236c59';
+    ctx.strokeStyle=(a.status==='ambiguous'||a.status==='multiple'||a.status==='uncertain_blank')?'#c43d30':'#236c59';
     for(const c of centers.filter(Boolean)){
       const p=applyH(H,c.x,c.y);
       const px=applyH(H,c.x+8,c.y);
@@ -2958,16 +3127,22 @@ function responseCenters(n){
   if(n<=35)return OMR_TEMPLATE.rightX.map(x=>({x,y:OMR_TEMPLATE.topRows[n-26]}));
   return OMR_TEMPLATE.rightX.map(x=>({x,y:OMR_TEMPLATE.bottomRows[n-36]}));
 }
-function classifyRow(n,scores,labels=['A','B','C','D']){
+function classifyRow(n,scores,labels=['A','B','C','D','E']){
   const ranked=scores.map((s,i)=>({s,i})).sort((a,b)=>b.s-a.s);
   const best=ranked[0],second=ranked[1];
   const baseline=(scores.reduce((a,b)=>a+b,0)-best.s)/Math.max(1,scores.length-1);
   const threshold=Math.max(.24,baseline+.10);
   const margin=best.s-(second?.s||0);
-  const metrics={best:best.s,second:second?.s||0,margin,threshold,labels};
-  if(best.s<threshold)return {n,answer:'',status:'blank',scores,metrics};
-  if(second.s>.22 && margin<.10)return {n,answer:labels[best.i],status:'ambiguous',scores,metrics};
-  return {n,answer:labels[best.i],status:'ok',scores,metrics};
+  const strongThreshold=Math.max(.27,baseline+.12);
+  const marked=ranked.filter(x=>x.s>=strongThreshold).map(x=>labels[x.i]);
+  const metrics={best:best.s,second:second?.s||0,margin,threshold,strongThreshold,labels,marked};
+  if(best.s<threshold){
+    if(best.s>=Math.max(.16,threshold-.08))return {n,answer:'',status:'uncertain_blank',scores,metrics,marked:[]};
+    return {n,answer:'',status:'blank',scores,metrics,marked:[]};
+  }
+  if(marked.length>=2)return {n,answer:labels[best.i],status:'multiple',scores,metrics,marked};
+  if(second.s>.22 && margin<.10)return {n,answer:labels[best.i],status:'ambiguous',scores,metrics,marked:[labels[best.i]]};
+  return {n,answer:labels[best.i],status:'ok',scores,metrics,marked:[labels[best.i]]};
 }
 function readRun(im,H){
   let digits='',issues=[];
@@ -3212,6 +3387,7 @@ if($('#refreshResults'))$('#refreshResults').onclick=renderResults;
 if($('#exportResultsCsv'))$('#exportResultsCsv').onclick=exportResultsCsv;
 if($('#printStudentReports'))$('#printStudentReports').onclick=printStudentReports;
 if($('#printCourseReport'))$('#printCourseReport').onclick=printCourseReport;
+if($('#printAllStudentReports'))$('#printAllStudentReports').onclick=()=>{const old=resultsScope;resultsScope='course';printStudentReports();resultsScope=old;};
 
 if($('#runIntegrityCheck'))$('#runIntegrityCheck').onclick=()=>{renderDataIntegrity();alert('Verificación de integridad completada.')};
 if($('#runArchitectureCheck'))$('#runArchitectureCheck').onclick=()=>renderArchitectureStatus(true);
@@ -3226,4 +3402,4 @@ $('#saveSchoolYear').onclick=()=>{
  const i=state.years.findIndex(y=>Number(y.year)===year);if(i>=0)state.years[i]=obj;else state.years.push(obj);
  logActivity('school_year_saved',`Calendario ${year}`,{year});persist();renderSettings();renderDashboard();renderCourses();renderCalendar();alert(`Calendario ${year} guardado.`);
 };$('#saveSettings').onclick=()=>{state.settings={threshold:Number($('#settingThreshold').value)||60,minGrade:Number($('#settingMinGrade').value)||1,passGrade:Number($('#settingPassGrade').value)||4,maxGrade:Number($('#settingMaxGrade').value)||7};persist();alert('Escala predeterminada guardada.')};
-persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();const rt=$('#runtime');rt.textContent='v0.38 activa';setTimeout(()=>rt.remove(),2500);
+persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();restoreScanDraft();const rt=$('#runtime');rt.textContent='v0.41 activa';setTimeout(()=>rt.remove(),2500);
