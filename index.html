@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#17212b" />
-<title>Lector OMR Docente v0.41 PWA</title>
+<title>Lector OMR Docente v0.43 PWA</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 
@@ -12,7 +12,7 @@
 <body>
 <div class="app">
 <aside class="sidebar">
-  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.41 · PWA</span></div></div>
+  <div class="brand"><div class="brand-mark">OMR</div><div><strong>Lector Docente</strong><span>prototipo v0.43 · PWA</span></div></div>
   <nav class="nav">
     <button class="active" data-view="dashboard" data-short="Inicio">Inicio</button>
     <button data-view="courses" data-short="Cursos">Cursos</button>
@@ -203,13 +203,51 @@
       <p class="mini-note">Desde esta versión los datos persistentes también se guardan como una base JSON unificada. La interfaz sigue funcionando igual; este cambio prepara la migración futura a una base local de la app.</p>
     </article>
     <article class="panel" style="margin-top:16px">
-      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.41</span></div>
+      <div class="panel-head"><div><h2>Arquitectura del prototipo</h2><p>Separación lógica de los componentes que luego pasarán a la aplicación de escritorio y móvil.</p></div><span class="schema-pill">v0.43</span></div>
       <div id="architectureSummary"></div>
       <div class="actions"><button id="runArchitectureCheck" class="secondary">Ejecutar autodiagnóstico</button></div>
       <p class="mini-note">La distribución sigue siendo un único archivo HTML para facilitar las pruebas. Internamente las funciones principales siguen agrupadas detrás de servicios definidos. La identidad longitudinal solo se vincula cuando el usuario lo confirma.</p>
     </article>
   </section>
 </main>
+</div>
+
+
+<div id="resultAnswerReviewModal" class="modal hidden">
+  <div class="backdrop" data-close="resultAnswerReviewModal"></div>
+  <div class="modal-card sheet-review-modal">
+    <div class="dialog-head">
+      <div><h2>Corregir resultado guardado</h2><p id="resultAnswerReviewSubtitle" class="meta"></p></div>
+      <button class="xbtn" data-close="resultAnswerReviewModal">×</button>
+    </div>
+    <div class="sheet-review-layout">
+      <div class="sheet-review-imagewrap"><img id="resultAnswerReviewImage" alt="Hoja del estudiante"></div>
+      <div class="sheet-review-panel">
+        <div id="resultAnswerReviewSummary" class="meta"></div>
+        <div id="resultAnswerReviewQuestions" class="sheet-review-questions"></div>
+        <div class="review-savebar">
+          <span class="status" id="resultAnswerReviewStatus">Sin cambios pendientes</span>
+          <button class="secondary" data-close="resultAnswerReviewModal">Cancelar</button>
+          <button id="resultAnswerReviewSave" class="primary">Guardar cambios</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="sheetReviewModal" class="modal hidden">
+  <div class="backdrop" data-close="sheetReviewModal"></div>
+  <div class="modal-card sheet-review-modal">
+    <div class="dialog-head"><div><h2>Revisión manual de hoja</h2><p id="sheetReviewSubtitle" class="meta"></p></div><button class="xbtn" data-close="sheetReviewModal">×</button></div>
+    <div class="sheet-review-layout">
+      <div class="sheet-review-imagewrap"><img id="sheetReviewImage" alt="Hoja escaneada"></div>
+      <div class="sheet-review-panel">
+        <div id="sheetReviewSummary" class="meta"></div>
+        <div id="sheetReviewQuestions" class="sheet-review-questions"></div>
+        <div class="review-savebar"><span class="status" id="sheetReviewStatus">Sin cambios pendientes</span><button class="secondary" data-close="sheetReviewModal">Cerrar</button><button id="sheetReviewSave" class="primary">Guardar correcciones</button></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="evaluationModal" class="modal hidden"><div class="backdrop" data-close="evaluationModal"></div><div class="modal-card"><div class="dialog-head"><h2>Nueva evaluación</h2><button class="xbtn" data-close="evaluationModal">×</button></div><form id="evaluationForm"><div class="form-grid"><label class="wide">Nombre<input id="evName" required placeholder="Ej. Prueba N.º 4 – Guerra Fría"></label><label>Curso<select id="evCourse" required></select></label><label>Fecha<input id="evDate" type="date"></label><label>Tipo<select id="evType"><option value="sumativa">Sumativa</option><option value="formativa">Formativa</option></select></label><label>Estado<select id="evStatus"><option value="planificada">Planificada</option><option value="configurada">Configurada</option></select></label><label class="wide">Unidad<input id="evUnit" placeholder="Ej. Unidad 3: Guerra Fría"></label><label class="wide">Objetivo curricular<textarea id="evObjective" placeholder="OA u objetivo curricular evaluado"></textarea></label><label>N.º preguntas<input id="evQuestions" type="number" min="1" max="100" value="36"></label><label>Alternativas<select id="evChoices"><option value="2">A–B</option><option value="3">A–C</option><option value="4" selected>A–D</option><option value="5">A–E</option></select></label><label class="wide">Formas / versiones<input id="evForms" placeholder="A1, A2, B1, B2, PIE-A1, PIE-A2"></label></div><div class="hint">Las formas quedan agrupadas en una sola evaluación. Después puedes agregar o quitar formas desde el editor. Cada pregunta comienza con 1 punto.</div><div class="actions"><button type="button" class="secondary" data-close="evaluationModal">Cancelar</button><button type="submit" class="primary">Crear y configurar</button></div></form></div></div>
@@ -302,10 +340,10 @@
 </div>
 
 <div id="runtime" class="runtime">Cargando…</div>
-<script src="js/app.js?v=0.41"></script>
+<script src="js/app.js?v=0.43"></script>
 <script>
 if('serviceWorker' in navigator&&location.protocol!=='file:'){
-  window.addEventListener('load',async()=>{try{const r=await navigator.serviceWorker.register('./sw.js?v=0.41');await r.update()}catch(e){console.warn(e)}})
+  window.addEventListener('load',async()=>{try{const r=await navigator.serviceWorker.register('./sw.js?v=0.43');await r.update()}catch(e){console.warn(e)}})
 }
 </script></body>
 </html>

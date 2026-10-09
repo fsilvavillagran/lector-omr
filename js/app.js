@@ -379,7 +379,6 @@ function compactOMRForStorage(o){
   if(!o)return null;
   const copy=JSON.parse(JSON.stringify(o));
   delete copy.runCrop;
-  delete copy.markers;
   delete copy.diagnostic;
   (copy.answers||[]).forEach(a=>{delete a.crop;delete a.scores;delete a.sampleCenters});
   return copy;
@@ -414,6 +413,14 @@ async function savePageResult(page){
     state.review.push({id:uid(),source:'omr',type:'Posible duplicado',file:page.label,detail:`Ya existe un escaneo para ${o.studentMatch?.name||o.studentMatch?.run||'este estudiante'} en esta evaluación. Revisa cuál conservar.`,resultKey:key,duplicateKey:duplicate.key});
   }
   persist();
+  // Conserva también la hoja original en IndexedDB para poder corregirla después,
+  // incluso cuando el lote ya fue limpiado.
+  try{
+    if(page.thumb){
+      const originalBlob=page.thumb.startsWith('data:')?dataURLToBlob(page.thumb):await (await fetch(page.thumb)).blob();
+      if(originalBlob)await evidencePut(`${key}::original`,originalBlob);
+    }
+  }catch(err){console.warn('No se pudo guardar la hoja original:',err)}
   await saveCorrectionEvidence(page,key);
 }
 function updateStoredResultFromPage(page){
@@ -581,6 +588,104 @@ function resultCourseStudents(rec){
   return state.students.filter(s=>s.courseId===ev?.courseId).slice()
     .sort((a,b)=>`${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`,'es'));
 }
+
+let storedResultReviewKey='';
+let storedResultDraft={};
+
+async function openStoredResultReview(resultKey){
+  const rec=resultRecordByKey(resultKey);
+  if(!rec?.omr?.ok)return alert('No se encontró este resultado.');
+  storedResultReviewKey=rec.key||rec.id;
+  storedResultDraft={};
+  const ev=state.evaluations.find(e=>e.id===rec.evaluationId);
+  const student=rec.omr.studentMatch?.studentId?state.students.find(s=>s.id===rec.omr.studentMatch.studentId):null;
+  $('#resultAnswerReviewSubtitle').textContent=`${student?`${student.lastName||''} ${student.firstName||''}`.trim():rec.omr.studentMatch?.name||'Sin identificar'} · ${ev?.name||''}`;
+
+  // Para resultados nuevos usamos la hoja original. Para resultados anteriores a v0.43,
+  // si no existe, mostramos la evidencia corregida como referencia.
+  const original=await evidenceGet(`${storedResultReviewKey}::original`);
+  const fallback=!original?await evidenceGet(rec.evidenceKey||storedResultReviewKey):null;
+  const blob=original||fallback;
+  if(blob){
+    const url=URL.createObjectURL(blob);
+    $('#resultAnswerReviewImage').src=url;
+    $('#resultAnswerReviewImage').dataset.objectUrl=url;
+  }else{
+    $('#resultAnswerReviewImage').removeAttribute('src');
+  }
+  renderStoredResultReview();
+  openModal('resultAnswerReviewModal');
+}
+
+function storedResultCurrentAnswer(a){
+  return Object.prototype.hasOwnProperty.call(storedResultDraft,a.n)?storedResultDraft[a.n]:(a.answer||'');
+}
+
+function setStoredResultAnswer(n,value){
+  storedResultDraft[n]=value;
+  renderStoredResultReview();
+}
+
+function renderStoredResultReview(){
+  const rec=resultRecordByKey(storedResultReviewKey);if(!rec?.omr)return;
+  const ev=state.evaluations.find(e=>e.id===rec.evaluationId);
+  const form=rec.omr.form||ev?.forms?.[0];
+  const cfg=ev?.formConfigs?.[form]||ev?.formConfigs?.[ev?.forms?.[0]];
+  const answers=rec.omr.answers||[];
+  const changed=Object.keys(storedResultDraft).length;
+  $('#resultAnswerReviewSummary').innerHTML=`<strong>${answers.length} preguntas</strong> · ${changed} cambio(s) pendiente(s). Puedes modificar cualquier respuesta, aunque el lector originalmente la haya considerado válida.`;
+  $('#resultAnswerReviewQuestions').innerHTML=answers.map((a,i)=>{
+    const q=cfg?.items?.[i];
+    const labels=(q?.options?.length?q.options:defaultOptionsFor(ev)).filter(x=>['A','B','C','D','E'].includes(x));
+    const current=storedResultCurrentAnswer(a);
+    const manual=Object.prototype.hasOwnProperty.call(storedResultDraft,a.n);
+    const key=String(q?.key||'').toUpperCase();
+    return `<div class="sheet-review-q ${manual?'changed':''}">
+      <div class="top"><strong>P${a.n}</strong><span class="meta">Clave: ${esc(key||'—')}</span></div>
+      <div class="meta">Resultado guardado: <strong>${esc(a.answer||'Blanco')}</strong>${manual?` · <strong>nuevo: ${esc(current||'Blanco')}</strong>`:''}</div>
+      <div class="choices">
+        ${labels.map(l=>`<button class="${current===l?'primary':'secondary'} small" onclick="setStoredResultAnswer(${a.n},'${l}')">${l}</button>`).join('')}
+        <button class="${!current?'primary':'secondary'} small" onclick="setStoredResultAnswer(${a.n},'')">Blanco</button>
+      </div>
+    </div>`;
+  }).join('');
+  $('#resultAnswerReviewStatus').textContent=changed?`${changed} cambio(s) pendiente(s)`:'Sin cambios pendientes';
+  $('#resultAnswerReviewSave').disabled=!changed;
+}
+
+async function saveStoredResultReview(){
+  const rec=resultRecordByKey(storedResultReviewKey);if(!rec?.omr)return;
+  const entries=Object.entries(storedResultDraft);if(!entries.length)return;
+  for(const [ns,value] of entries){
+    const n=Number(ns),a=rec.omr.answers?.find(x=>x.n===n);if(!a)continue;
+    const before=a.answer||'';
+    a.answer=value;a.status='ok';a.reviewed=true;a.manual=true;a.marked=value?[value]:[];
+    logActivity('answer_reviewed',`${rec.label||'Resultado'} · P${n}: ${before||'Blanco'} → ${value||'Blanco'}`,{evaluationId:rec.evaluationId,resultKey:rec.key,studentId:rec.omr.studentMatch?.studentId||null});
+  }
+  recalcStoredResultsForEvaluation(rec.evaluationId);
+  rec.savedAt=new Date().toISOString();
+  persist();
+
+  // Si la hoja original y los marcadores existen, regeneramos también la evidencia corregida.
+  try{
+    const original=await evidenceGet(`${rec.key}::original`);
+    if(original&&rec.omr.markers){
+      const url=URL.createObjectURL(original);
+      const pseudo={thumb:url,omr:rec.omr};
+      const blob=await buildCorrectionEvidence(pseudo);
+      URL.revokeObjectURL(url);
+      if(blob)await evidencePut(rec.evidenceKey||rec.key,blob);
+    }
+  }catch(err){console.warn('No se pudo regenerar la evidencia corregida:',err)}
+
+  storedResultDraft={};
+  renderResults();
+  renderDashboard();
+  renderStats();
+  renderStoredResultReview();
+  $('#resultAnswerReviewStatus').textContent='Cambios guardados y puntaje recalculado';
+}
+
 async function openResultIdentityReview(resultKey){
   const rec=resultRecordByKey(resultKey);if(!rec)return alert('No se encontró este resultado.');
   const ev=state.evaluations.find(e=>e.id===rec.evaluationId);
@@ -649,7 +754,7 @@ async function deleteScannedResult(resultKey){
   const ev=state.evaluations.find(e=>e.id===rec.evaluationId);
   const who=rec.omr?.studentMatch?.name||rec.omr?.studentMatch?.run||'sin identificar';
   if(!confirm(`Eliminar este escaneo de “${ev?.name||'la evaluación'}” (${who})?\n\nSe eliminarán el resultado guardado, su evidencia corregida y las incidencias asociadas. Esta acción no se puede deshacer.`))return;
-  await evidenceDelete(rec.evidenceKey||rec.key);
+  await evidenceDelete(rec.evidenceKey||rec.key);await evidenceDelete(`${rec.key}::original`);
   logActivity('scan_deleted',`${rec.label} · ${who}`,{evaluationId:rec.evaluationId,resultKey:rec.key,studentId:rec.omr?.studentMatch?.studentId||null});
   state.results=state.results.filter(r=>r.key!==rec.key);
   state.review=state.review.filter(r=>r.file!==rec.label);
@@ -738,7 +843,7 @@ function renderStudentQuestionDetail(r,body){
     <div class="sq"><span>Incorrectas</span><strong>${c.incorrect}</strong></div>
     <div class="sq"><span>En blanco</span><strong>${c.blank}</strong></div>
   </div>
-  <div class="evidence-actions"><button class="secondary small" onclick="showCorrectionEvidence('${r.page.key}')">Ver hoja corregida</button></div>
+  <div class="evidence-actions"><button class="secondary small" onclick="showCorrectionEvidence('${r.page.key}')">Ver hoja corregida</button><button class="primary small" onclick="openStoredResultReview('${r.page.key}')">Corregir respuestas</button></div>
   <div style="overflow:auto;margin-top:10px"><table class="result-table"><thead><tr>
     <th>Pregunta</th><th>Respuesta</th><th>Correcta</th><th>Estado</th><th>Puntaje</th><th>Habilidad</th><th>Contenido</th>
   </tr></thead><tbody>${qs.map(x=>`<tr>
@@ -768,7 +873,7 @@ function renderStudentSummary(ev,r,body){
         ${counts.voided?`<div class="alert-item"><span>Anuladas</span><strong>${counts.voided}</strong></div>`:''}
         <div class="alert-item"><span>Forma</span><strong>${esc(r.form||'—')}</strong></div>
       </div>
-      <div class="evidence-actions"><button class="secondary small" onclick="showCorrectionEvidence('${r.page.key}')">Ver hoja corregida</button></div>
+      <div class="evidence-actions"><button class="secondary small" onclick="showCorrectionEvidence('${r.page.key}')">Ver hoja corregida</button><button class="primary small" onclick="openStoredResultReview('${r.page.key}')">Corregir respuestas</button></div>
     </div>
     <div class="panel-lite"><h3>Habilidades</h3><div class="alert-list">${skills.length?skills.map(x=>`<div class="alert-item ${x.pct<60?'bad':x.pct>=80?'good':''}"><span>${esc(x.tag)}</span><strong>${x.pct.toFixed(1)}%</strong></div>`).join(''):'<div class="meta">Sin habilidades configuradas.</div>'}</div></div>
     <div class="panel-lite"><h3>Contenidos</h3><div class="alert-list">${contents.length?contents.map(x=>`<div class="alert-item ${x.pct<60?'bad':x.pct>=80?'good':''}"><span>${esc(x.tag)}</span><strong>${x.pct.toFixed(1)}%</strong></div>`).join(''):'<div class="meta">Sin contenidos configurados.</div>'}</div></div>
@@ -787,7 +892,7 @@ function renderStudentResults(ev,rows,body){
     <td>${r.percent.toFixed(1)}%</td>
     ${ev.type==='sumativa'?`<td><strong>${r.grade?.toFixed(1)??'—'}</strong></td>`:''}
     <td>${r.student?'<span class="flag ok">Identificado</span>':'<span class="flag warn">Sin identificar</span>'}</td>
-    <td><div class="evidence-actions"><button class="secondary small" onclick="showCorrectionEvidence('${r.page.key}')">Ver hoja</button><button class="secondary small" onclick="openResultIdentityReview('${r.page.key}')">Revisar</button><button class="danger small" onclick="deleteScannedResult('${r.page.key}')">Eliminar</button></div></td>
+    <td><div class="evidence-actions"><button class="secondary small" onclick="showCorrectionEvidence('${r.page.key}')">Ver hoja</button><button class="primary small" onclick="openStoredResultReview('${r.page.key}')">Corregir respuestas</button><button class="secondary small" onclick="openResultIdentityReview('${r.page.key}')">Revisar identidad</button><button class="danger small" onclick="deleteScannedResult('${r.page.key}')">Eliminar</button></div></td>
   </tr>`).join('')}</tbody></table></div>`;
 }
 function questionAggregate(ev,rows){
@@ -2086,6 +2191,7 @@ function renderOMRCard(o,pageLabel=''){
     <div class="omr-line"><strong>En blanco</strong><span>${(o.answers||[]).filter(a=>a.status==='blank').length}</span></div>
     ${o.score?`<div class="omr-line"><strong>Puntaje</strong><span>${o.score.earned.toFixed(1)} / ${o.score.max.toFixed(1)}</span></div>`:''}
     <div class="omr-answers">${esc(ans)}</div>
+    ${pageLabel?`<div class="actions" style="margin-top:8px"><button class="secondary small" onclick="openSheetReview('${pageLabel.replace(/'/g,"&#39;")}')">Revisar hoja completa</button></div>`:''}
     ${o.diagnostic?`<details class="omr-diagnostic"><summary>Ver mapa de lectura OMR</summary><img src="${o.diagnostic}" alt="Mapa de lectura OMR"><div class="meta">Los círculos muestran exactamente dónde muestreó el lector cada alternativa. Las filas dudosas se resaltan de forma distinta.</div></details>`:''}
     <details class="answer-audit"><summary>Revisar / corregir todas las respuestas</summary>
       <div class="answer-audit-grid">
@@ -2106,6 +2212,35 @@ function renderOMRCard(o,pageLabel=''){
   </div>`;
 }
 
+
+let sheetReviewPageLabel='';
+let sheetReviewDraft={};
+let sheetReviewFilter='all';
+function openSheetReview(pageLabel){
+  const page=(state.scanPages||[]).find(p=>p.label===pageLabel);
+  if(!page?.omr?.ok)return alert('No se encontró una lectura OMR válida para esta hoja.');
+  sheetReviewPageLabel=pageLabel;sheetReviewDraft={};sheetReviewFilter='all';
+  $('#sheetReviewImage').src=page.thumb||'';
+  $('#sheetReviewSubtitle').textContent=`${page.label} · ${page.omr.studentMatch?.name||page.omr.rawRun||'Sin identificar'}`;
+  renderSheetReview();openModal('sheetReviewModal');
+}
+function sheetReviewCurrentAnswer(a){return Object.prototype.hasOwnProperty.call(sheetReviewDraft,a.n)?sheetReviewDraft[a.n]:(a.answer||'');}
+function setSheetReviewAnswer(n,value){const page=(state.scanPages||[]).find(p=>p.label===sheetReviewPageLabel);const a=page?.omr?.answers?.find(x=>x.n===n);if(!a)return;sheetReviewDraft[n]=value;renderSheetReview();}
+function setSheetReviewFilter(v){sheetReviewFilter=v;renderSheetReview();}
+function renderSheetReview(){
+  const page=(state.scanPages||[]).find(p=>p.label===sheetReviewPageLabel);if(!page?.omr)return;
+  const answers=page.omr.answers||[],changedCount=Object.keys(sheetReviewDraft).length,attentionCount=answers.filter(a=>['ambiguous','multiple','uncertain_blank'].includes(a.status)).length;
+  $('#sheetReviewSummary').innerHTML=`<div><strong>${answers.length} preguntas</strong> · ${attentionCount} con alerta · ${changedCount} cambio(s) manual(es)</div><div class="sheet-review-filter"><button class="${sheetReviewFilter==='all'?'active':'secondary'} small" onclick="setSheetReviewFilter('all')">Todas</button><button class="${sheetReviewFilter==='attention'?'active':'secondary'} small" onclick="setSheetReviewFilter('attention')">Solo alertas</button><button class="${sheetReviewFilter==='changed'?'active':'secondary'} small" onclick="setSheetReviewFilter('changed')">Solo modificadas</button></div>`;
+  const filtered=answers.filter(a=>sheetReviewFilter==='attention'?['ambiguous','multiple','uncertain_blank'].includes(a.status):sheetReviewFilter==='changed'?Object.prototype.hasOwnProperty.call(sheetReviewDraft,a.n):true);
+  $('#sheetReviewQuestions').innerHTML=filtered.map(a=>{const labels=a.metrics?.labels||['A','B','C','D','E'].slice(0,a.scores?.length||4);const current=sheetReviewCurrentAnswer(a),changed=Object.prototype.hasOwnProperty.call(sheetReviewDraft,a.n),att=['ambiguous','multiple','uncertain_blank'].includes(a.status);return `<div class="sheet-review-q ${changed?'changed':''} ${att?'attention':''}"><div class="top"><strong>P${a.n}</strong><span class="meta">${att?(a.status==='multiple'?'Marcas múltiples':a.status==='uncertain_blank'?'Blanco dudoso':'Marca ambigua'):'Lectura normal'}</span></div><div class="meta">Lector: <strong>${esc(a.answer||'Blanco')}</strong>${a.marked?.length>1?` · detectó ${esc(a.marked.join(' + '))}`:''}${changed?` · <strong>manual: ${esc(current||'Blanco')}</strong>`:''}</div><div class="choices">${labels.map(l=>`<button class="${current===l?'primary':'secondary'} small" onclick="setSheetReviewAnswer(${a.n},'${l}')">${l}</button>`).join('')}<button class="${!current?'primary':'secondary'} small" onclick="setSheetReviewAnswer(${a.n},'')">Blanco</button></div></div>`;}).join('')||'<div class="empty">No hay preguntas en este filtro.</div>';
+  $('#sheetReviewStatus').textContent=changedCount?`${changedCount} cambio(s) pendiente(s)`:'Sin cambios pendientes';$('#sheetReviewSave').disabled=!changedCount;
+}
+function saveSheetReview(){
+  const page=(state.scanPages||[]).find(p=>p.label===sheetReviewPageLabel);if(!page?.omr)return;const entries=Object.entries(sheetReviewDraft);if(!entries.length)return;
+  for(const [ns,value] of entries){const n=Number(ns),a=page.omr.answers?.find(x=>x.n===n);if(!a)continue;a.answer=value;a.status='ok';a.reviewed=true;a.manual=true;a.marked=value?[value]:[];logActivity('answer_reviewed',`${page.label} · P${n} → ${value||'Blanco'}`,{evaluationId:page.omr.evaluationId,resultKey:resultKeyForPage(page,page.omr)});}
+  recomputePageScore(page);const rr=state.review.find(r=>r.file===page.label&&r.type==='Revisar respuestas');if(rr){const remaining=page.omr.answers.filter(x=>['ambiguous','multiple','uncertain_blank'].includes(x.status));if(!remaining.length)state.review=state.review.filter(r=>r.id!==rr.id);else rr.detail=remaining.map(x=>`P${x.n}: ${x.status==='multiple'?'marcas múltiples':x.status==='uncertain_blank'?'blanco dudoso':'marca ambigua'}`).join(' · ');}
+  sheetReviewDraft={};persist();persistScanDraft();renderScan();renderReview();renderStats();renderSheetReview();$('#sheetReviewStatus').textContent='Correcciones guardadas';
+}
 
 function manualCorrectAnswer(pageLabel,n,value){
   const page=(state.scanPages||[]).find(p=>p.label===pageLabel&&!p.finalized);
@@ -2405,7 +2540,7 @@ function renderDataIntegrity(){
 
 
 const AppArchitecture={
-  version:'0.41',
+  version:'0.43',
   modules:{
     data:{name:'Datos',description:'Persistencia, identidad longitudinal opcional e integridad.',get snapshot(){return databaseSnapshot},get persist(){return persist},get audit(){return dataIntegrityReport}},
     evidence:{name:'Evidencias',description:'Imágenes corregidas asociadas a resultados.',get put(){return evidencePut},get get(){return evidenceGet},get remove(){return evidenceDelete},get keys(){return evidenceKeys}},
@@ -3387,6 +3522,8 @@ if($('#refreshResults'))$('#refreshResults').onclick=renderResults;
 if($('#exportResultsCsv'))$('#exportResultsCsv').onclick=exportResultsCsv;
 if($('#printStudentReports'))$('#printStudentReports').onclick=printStudentReports;
 if($('#printCourseReport'))$('#printCourseReport').onclick=printCourseReport;
+if($('#sheetReviewSave'))$('#sheetReviewSave').onclick=saveSheetReview;
+if($('#resultAnswerReviewSave'))$('#resultAnswerReviewSave').onclick=saveStoredResultReview;
 if($('#printAllStudentReports'))$('#printAllStudentReports').onclick=()=>{const old=resultsScope;resultsScope='course';printStudentReports();resultsScope=old;};
 
 if($('#runIntegrityCheck'))$('#runIntegrityCheck').onclick=()=>{renderDataIntegrity();alert('Verificación de integridad completada.')};
@@ -3402,4 +3539,4 @@ $('#saveSchoolYear').onclick=()=>{
  const i=state.years.findIndex(y=>Number(y.year)===year);if(i>=0)state.years[i]=obj;else state.years.push(obj);
  logActivity('school_year_saved',`Calendario ${year}`,{year});persist();renderSettings();renderDashboard();renderCourses();renderCalendar();alert(`Calendario ${year} guardado.`);
 };$('#saveSettings').onclick=()=>{state.settings={threshold:Number($('#settingThreshold').value)||60,minGrade:Number($('#settingMinGrade').value)||1,passGrade:Number($('#settingPassGrade').value)||4,maxGrade:Number($('#settingMaxGrade').value)||7};persist();alert('Escala predeterminada guardada.')};
-persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();restoreScanDraft();const rt=$('#runtime');rt.textContent='v0.41 activa';setTimeout(()=>rt.remove(),2500);
+persist();renderStats();renderDashboard();renderCourses();renderCalendar();renderEvaluations();renderScan();renderReview();renderSettings();restoreScanDraft();const rt=$('#runtime');rt.textContent='v0.43 activa';setTimeout(()=>rt.remove(),2500);

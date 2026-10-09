@@ -354,6 +354,17 @@
 .performance-bar strong{text-align:right}
 
 
+.sheet-review-modal{width:min(1180px,96vw);height:min(92vh,920px);max-width:none;display:flex;flex-direction:column}
+.sheet-review-layout{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(340px,.65fr);gap:14px;min-height:0;flex:1}
+.sheet-review-imagewrap{min-height:0;overflow:auto;background:#f2f4f6;border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;justify-content:center;align-items:flex-start}
+.sheet-review-imagewrap img{max-width:100%;height:auto;display:block;background:#fff}
+.sheet-review-panel{min-height:0;display:flex;flex-direction:column}.sheet-review-questions{overflow:auto;display:grid;gap:6px;padding-right:4px;margin-top:8px}
+.sheet-review-q{border:1px solid var(--line);border-radius:9px;padding:7px;background:#fff}.sheet-review-q.changed{border-color:#2458c6;background:#f5f8ff}.sheet-review-q.attention{border-color:#e0b24e;background:#fffaf0}
+.sheet-review-q .top{display:flex;justify-content:space-between;gap:8px;align-items:center}.sheet-review-q .choices{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}.sheet-review-q .choices button{min-width:31px}
+.sheet-review-filter{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.sheet-review-filter button.active{background:#2458c6;color:#fff;border-color:#2458c6}
+@media(max-width:850px){.sheet-review-modal{width:100vw;height:100dvh;border-radius:0}.sheet-review-layout{grid-template-columns:1fr;grid-template-rows:minmax(260px,44vh) 1fr}}
+
+
 
 
     body{font-family:Arial,sans-serif;color:#1e2935;margin:0;background:#fff}
